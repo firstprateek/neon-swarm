@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { pass } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
-import { createState, xpForLevel, rollUpgrades } from './state';
+import { createState, grantXp, rollUpgrades } from './state';
 import { getMove } from './input';
 import { SpatialGrid } from './spatial';
 import { Swarm, ENEMY_TYPES } from './swarm';
@@ -10,22 +10,72 @@ import * as hud from './hud';
 
 const MAX_ENEMIES = 20000;
 
-async function start() {
-  // ?webgl forces the WebGL2 backend (useful for envs with broken WebGPU presentation)
-  // alpha: false → opaque canvas: correct for a fullscreen game and avoids
-  // premultiplied-alpha compositing issues in headless captures
-  const renderer = new THREE.WebGPURenderer({
-    antialias: true,
-    alpha: false,
-    forceWebGL: location.search.includes('webgl'),
-  });
+async function makeRenderer(forceWebGL: boolean): Promise<THREE.WebGPURenderer> {
+  const renderer = new THREE.WebGPURenderer({ antialias: true, alpha: false, forceWebGL });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   await renderer.init();
-  document.getElementById('app')!.appendChild(renderer.domElement);
+  return renderer;
+}
 
-  const isWebGPU = (renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend === true;
-  hud.setBackend(`${isWebGPU ? 'WebGPU' : 'WebGL2 (fallback)'} · ${MAX_ENEMIES.toLocaleString()} max swarm · 1 draw call`);
+/**
+ * Draw a bright probe frame and read the canvas back; true means the pixels
+ * stayed fully black — i.e. this render path never reaches the screen in the
+ * current environment (seen with WebGPU canvases in some headless/embedded
+ * browsers). Readback failures count as "fine" so we never downgrade on
+ * inconclusive evidence.
+ */
+async function presentsBlack(
+  canvas: HTMLCanvasElement,
+  scene: THREE.Scene,
+  draw: () => Promise<unknown> | unknown
+): Promise<boolean> {
+  const prevBg = scene.background;
+  const prevFog = scene.fog;
+  scene.background = new THREE.Color(0xff00ff);
+  scene.fog = null;
+  const sample = (): number => {
+    try {
+      const c = document.createElement('canvas');
+      c.width = 8;
+      c.height = 8;
+      const ctx = c.getContext('2d');
+      if (!ctx) return -1;
+      ctx.drawImage(canvas, 0, 0, 8, 8);
+      const d = ctx.getImageData(0, 0, 8, 8).data;
+      let sum = 0;
+      for (let i = 0; i < d.length; i++) sum += d[i];
+      return sum;
+    } catch {
+      return -1;
+    }
+  };
+  let sum = -1;
+  try {
+    await draw();
+    sum = sample();
+    if (sum === 0) {
+      await new Promise(r => setTimeout(r, 150));
+      await draw();
+      sum = sample();
+    }
+  } catch {
+    sum = -1;
+  }
+  scene.background = prevBg;
+  scene.fog = prevFog;
+  return sum === 0;
+}
+
+async function start() {
+  const params = new URLSearchParams(location.search);
+  const forceGL = params.has('webgl'); // force the WebGL2 backend
+  const pinGPU = params.has('webgpu'); // trust WebGPU, skip the watchdog probe
+  const noBloom = params.has('nobloom');
+
+  let renderer = await makeRenderer(forceGL);
+  const app = document.getElementById('app')!;
+  app.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x05060a);
@@ -73,6 +123,21 @@ async function start() {
   player.add(glow);
   scene.add(player);
 
+  // --- presentation watchdog: never leave the player on a black screen ---
+  const onWebGPU = () => (renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend === true;
+  let backendNote = forceGL ? ' (forced)' : '';
+  if (!forceGL && !pinGPU && onWebGPU()) {
+    const black = await presentsBlack(renderer.domElement, scene, () => renderer.renderAsync(scene, camera));
+    if (black) {
+      console.warn('[neon-swarm] WebGPU presents black frames in this environment — auto-falling back to WebGL2 (pin with ?webgpu to override).');
+      renderer.dispose();
+      renderer.domElement.remove();
+      renderer = await makeRenderer(true);
+      app.appendChild(renderer.domElement);
+      backendNote = ' (auto-fallback)';
+    }
+  }
+
   // --- systems ---
   const state = createState();
   const swarm = new Swarm(MAX_ENEMIES, scene);
@@ -81,34 +146,34 @@ async function start() {
   const particles = new Particles(8192, scene);
   const grid = new SpatialGrid(2.5, 96, MAX_ENEMIES);
 
-  // debug/benchmark hook: spawn a ring of n enemies around the player
-  // (grants effectively infinite HP — it's a stress test, not a fair fight)
-  (window as unknown as Record<string, unknown>).__spawnTest = (n: number) => {
-    state.maxHp = state.hp = 1e9;
-    for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const rad = 15 + Math.random() * 45;
-      swarm.spawn((Math.random() * ENEMY_TYPES.length) | 0, player.position.x + Math.cos(a) * rad, player.position.z + Math.sin(a) * rad);
-    }
-    return swarm.count;
-  };
-
-  // --- post-processing bloom (graceful fallback to plain render) ---
+  // --- post-processing bloom, validated before use ---
   let post: { render: () => void } | null = null;
-  try {
-    if (location.search.includes('nobloom')) throw new Error('bloom disabled via ?nobloom');
-    const postProcessing = new THREE.PostProcessing(renderer);
-    const scenePass = pass(scene, camera);
-    const color = scenePass.getTextureNode('output');
-    postProcessing.outputNode = color.add(bloom(color, 0.65, 0.45, 0.3));
-    post = postProcessing;
-  } catch (err) {
-    console.warn('Bloom unavailable, rendering without post-processing:', err);
+  if (!noBloom) {
+    try {
+      const postProcessing = new THREE.PostProcessing(renderer);
+      const scenePass = pass(scene, camera);
+      const color = scenePass.getTextureNode('output');
+      // threshold 0.75: only emissive/bright-basic surfaces bloom (player,
+      // bullets, gems) — lower thresholds wash the whole horde out
+      postProcessing.outputNode = color.add(bloom(color, 0.55, 0.35, 0.75));
+      const pp = postProcessing as unknown as { render: () => void; renderAsync?: () => Promise<void> };
+      const black = await presentsBlack(renderer.domElement, scene, () => (pp.renderAsync ? pp.renderAsync() : pp.render()));
+      if (black) {
+        console.warn('[neon-swarm] bloom renders black on this backend — disabling post-processing.');
+      } else {
+        post = postProcessing;
+      }
+    } catch (err) {
+      console.warn('[neon-swarm] bloom unavailable, rendering without post-processing:', err);
+    }
   }
+
+  hud.setBackend(`${onWebGPU() ? 'WebGPU' : 'WebGL2'}${backendNote} · ${MAX_ENEMIES.toLocaleString()} swarm cap · bloom ${post ? 'on' : 'off'}`);
 
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
@@ -128,16 +193,6 @@ async function start() {
       if (state.pendingLevels > 0) openLevelUp();
       else leveling = false;
     });
-  }
-
-  function gainXp(v: number): void {
-    state.xp += v;
-    while (state.xp >= state.xpNeed) {
-      state.xp -= state.xpNeed;
-      state.level++;
-      state.xpNeed = xpForLevel(state.level);
-      state.pendingLevels++;
-    }
   }
 
   // --- spawn director ---
@@ -204,6 +259,37 @@ async function start() {
     hud.showGameOver(state);
   }
 
+  // debug/benchmark hook: spawn a ring of n enemies around the player
+  // (grants effectively infinite HP — it's a stress test, not a fair fight)
+  (window as unknown as Record<string, unknown>).__spawnTest = (n: number) => {
+    state.maxHp = state.hp = 1e9;
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const rad = 15 + Math.random() * 45;
+      swarm.spawn((Math.random() * ENEMY_TYPES.length) | 0, player.position.x + Math.cos(a) * rad, player.position.z + Math.sin(a) * rad);
+    }
+    return swarm.count;
+  };
+
+  // structured debug handle for E2E tests and console poking;
+  // step() drives the real update/render path with a fixed dt so tests
+  // stay deterministic even where rAF is throttled (hidden/headless tabs)
+  (window as unknown as Record<string, unknown>).__dbg = {
+    state, swarm, bullets, gems, particles, player, camera,
+    flags: () => ({ started, over, leveling }),
+    backend: () => (onWebGPU() ? 'webgpu' : 'webgl2'),
+    bloom: () => !!post,
+    step: (dt = 1 / 60, frames = 1) => {
+      for (let i = 0; i < frames; i++) {
+        if (started && !over && !leveling) update(dt);
+        hud.tick(dt);
+      }
+      if (post) post.render();
+      else renderer.render(scene, camera);
+      prev = performance.now();
+    },
+  };
+
   // --- main loop ---
   let prev = performance.now();
   let fpsFrames = 0;
@@ -255,7 +341,7 @@ async function start() {
       particles.burst(x, t.radius, z, t.color, type >= 2 ? 26 : 10);
     });
 
-    gems.update(dt, state.time, player.position.x, player.position.z, state.magnet, gainXp);
+    gems.update(dt, state.time, player.position.x, player.position.z, state.magnet, v => grantXp(state, v));
     particles.update(dt);
 
     if (state.hp <= 0) gameOver();

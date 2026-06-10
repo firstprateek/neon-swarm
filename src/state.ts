@@ -42,6 +42,17 @@ export function xpForLevel(level: number): number {
   return Math.round(8 * Math.pow(1.33, level - 1));
 }
 
+/** Add XP, cascading through any number of level-ups. */
+export function grantXp(s: GameState, v: number): void {
+  s.xp += v;
+  while (s.xp >= s.xpNeed) {
+    s.xp -= s.xpNeed;
+    s.level++;
+    s.xpNeed = xpForLevel(s.level);
+    s.pendingLevels++;
+  }
+}
+
 export interface Upgrade {
   name: string;
   desc: string;

@@ -1,0 +1,262 @@
+/**
+ * In-browser self-test suite. Served at /test.html (dev only).
+ * Imports the real game modules and asserts behavior of every system.
+ * Results render to the page and land on window.__testResults for tooling.
+ */
+import * as THREE from 'three/webgpu';
+import { SpatialGrid } from './spatial';
+import { Swarm, ENEMY_TYPES } from './swarm';
+import { Bullets, Gems, Particles } from './combat';
+import { createState, grantXp, xpForLevel, rollUpgrades, UPGRADES } from './state';
+import { getMove } from './input';
+import * as hud from './hud';
+
+interface Result { name: string; pass: boolean; detail: string }
+const results: Result[] = [];
+
+function check(name: string, cond: boolean, detail = ''): void {
+  results.push({ name, pass: !!cond, detail: cond ? '' : detail });
+}
+
+function run(): void {
+  // ---------- SpatialGrid ----------
+  {
+    const g = new SpatialGrid(2, 8, 16);
+    const px = new Float32Array([0, 3.5, -3.5, 1e6]);
+    const pz = new Float32Array([0, 3.5, -3.5, -1e6]);
+    g.build(px, pz, 4, 0, 0);
+    check('grid: total indexed equals count', g.cellStart[g.dim * g.dim] === 4, String(g.cellStart[g.dim * g.dim]));
+    const seen = [0, 0, 0, 0];
+    for (let k = 0; k < 4; k++) seen[g.indices[k]]++;
+    check('grid: each point indexed exactly once (incl. clamped outliers)', seen.every(v => v === 1), JSON.stringify(seen));
+  }
+  {
+    // fuzz: every pair closer than one cell must be discoverable via a 3x3 walk
+    const N = 400, cell = 2.5, dim = 32;
+    const g = new SpatialGrid(cell, dim, N);
+    const px = new Float32Array(N), pz = new Float32Array(N);
+    let s = 12345;
+    const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    for (let i = 0; i < N; i++) { px[i] = (rnd() - 0.5) * 70; pz[i] = (rnd() - 0.5) * 70; }
+    g.build(px, pz, N, 0, 0);
+    let missing = 0;
+    for (let i = 0; i < N; i++) {
+      for (let j = i + 1; j < N; j++) {
+        const dx = px[i] - px[j], dz = pz[i] - pz[j];
+        if (dx * dx + dz * dz >= cell * cell) continue;
+        let found = false;
+        const cx = g.cellX(px[i]), cz = g.cellZ(pz[i]);
+        for (let gz = Math.max(0, cz - 1); gz <= Math.min(dim - 1, cz + 1); gz++) {
+          for (let gx = Math.max(0, cx - 1); gx <= Math.min(dim - 1, cx + 1); gx++) {
+            const c = gz * dim + gx;
+            for (let k = g.cellStart[c]; k < g.cellStart[c + 1]; k++) if (g.indices[k] === j) found = true;
+          }
+        }
+        if (!found) missing++;
+      }
+    }
+    check('grid: fuzz 400 pts, all close pairs discoverable', missing === 0, missing + ' pairs missing');
+  }
+
+  // ---------- Swarm ----------
+  {
+    const scene = new THREE.Scene();
+    const sw = new Swarm(8, scene);
+    for (let i = 0; i < 8; i++) sw.spawn(0, i * 10, 0);
+    sw.spawn(0, 999, 0);
+    check('swarm: spawn beyond max ignored', sw.count === 8, String(sw.count));
+    sw.kill(3);
+    check('swarm: kill compacts count and mesh.count', sw.count === 7 && sw.mesh.count === 7, `${sw.count}/${sw.mesh.count}`);
+    check('swarm: swap-remove moved last into freed slot', sw.posX[3] === 70, String(sw.posX[3]));
+    const m = sw.mesh.instanceMatrix.array as Float32Array;
+    check('swarm: instance matrix swapped with slot', m[3 * 16 + 12] === 70, String(m[3 * 16 + 12]));
+    sw.hp[1] = 0; sw.hp[5] = 0; sw.hp[6] = 0;
+    let deaths = 0;
+    sw.sweepDead(() => deaths++);
+    check('swarm: sweepDead removes all dead (incl. adjacent at end)', sw.count === 4 && deaths === 3, `count=${sw.count} deaths=${deaths}`);
+    let aliveOk = true;
+    for (let i = 0; i < sw.count; i++) if (sw.hp[i] <= 0) aliveOk = false;
+    check('swarm: survivors all alive after sweep', aliveOk);
+  }
+  {
+    const scene = new THREE.Scene();
+    const sw = new Swarm(4, scene);
+    sw.spawn(0, 10, 0);
+    const g = new SpatialGrid(2.5, 16, 4);
+    g.build(sw.posX, sw.posZ, sw.count, 0, 0);
+    const dmg0 = sw.update(0.1, 0, 0, 0, g);
+    check('swarm: enemy chases the player', sw.posX[0] < 10 && Math.abs(sw.posZ[0]) < 0.01, `x=${sw.posX[0]}`);
+    check('swarm: no contact damage at range', dmg0 === 0, String(dmg0));
+
+    const sw2 = new Swarm(4, scene);
+    sw2.spawn(0, 0.5, 0);
+    const g2 = new SpatialGrid(2.5, 16, 4);
+    g2.build(sw2.posX, sw2.posZ, 1, 0, 0);
+    const dmg = sw2.update(0.1, 0, 0, 0, g2);
+    check('swarm: contact damage when touching', Math.abs(dmg - ENEMY_TYPES[0].dps * 0.1) < 1e-6, String(dmg));
+  }
+
+  // ---------- Bullets ----------
+  {
+    const scene = new THREE.Scene();
+    const sw = new Swarm(8, scene);
+    sw.spawn(0, 5, 0); // grunt: hp 3, r 0.5
+    const b = new Bullets(16, scene);
+    b.fire(0, 0, 1, 0, 10, 3, 0);
+    const g = new SpatialGrid(2.5, 32, 8);
+    for (let t = 0; t < 12 && b.count > 0; t++) {
+      g.build(sw.posX, sw.posZ, sw.count, 0, 0);
+      b.update(0.1, sw, g);
+    }
+    check('bullets: travelling bullet hits and kills', sw.hp[0] <= 0, `hp=${sw.hp[0]}`);
+    check('bullets: pierce-0 bullet consumed on hit', b.count === 0, String(b.count));
+  }
+  {
+    const scene = new THREE.Scene();
+    const sw = new Swarm(8, scene);
+    sw.spawn(3, 2, 0); // elite: hp 130, r 1.6
+    const b = new Bullets(16, scene);
+    b.fire(0, 0, 1, 0, 1, 5, 9); // slow bullet lingers inside the same enemy
+    const g = new SpatialGrid(2.5, 32, 8);
+    for (let t = 0; t < 10; t++) {
+      g.build(sw.posX, sw.posZ, sw.count, 0, 0);
+      b.update(0.1, sw, g);
+    }
+    check('bullets: lastHit prevents repeat hits on same enemy', sw.hp[0] === 125, `hp=${sw.hp[0]}`);
+    check('bullets: piercing bullet survives the hit', b.count === 1, String(b.count));
+  }
+  {
+    const scene = new THREE.Scene();
+    const sw = new Swarm(2, scene); // empty swarm
+    const b = new Bullets(4, scene);
+    b.fire(0, 0, 1, 0, 10, 1, 0);
+    const g = new SpatialGrid(2.5, 16, 2);
+    g.build(sw.posX, sw.posZ, 0, 0, 0);
+    for (let t = 0; t < 10; t++) b.update(0.2, sw, g);
+    check('bullets: expire by lifetime with nothing to hit', b.count === 0, String(b.count));
+  }
+
+  // ---------- Gems ----------
+  {
+    const scene = new THREE.Scene();
+    const gm = new Gems(4, scene);
+    gm.spawn(3, 0, 7);
+    let picked = 0;
+    for (let t = 0; t < 100 && gm.count > 0; t++) gm.update(0.05, t * 0.05, 0, 0, 6, v => { picked += v; });
+    check('gems: magnet pulls into pickup, value delivered', picked === 7 && gm.count === 0, `picked=${picked} count=${gm.count}`);
+
+    const gm2 = new Gems(2, scene);
+    gm2.spawn(50, 50, 1);
+    gm2.spawn(60, 60, 2);
+    gm2.spawn(70, 70, 4);
+    const total = gm2.val[0] + gm2.val[1];
+    check('gems: pool overflow folds value, none lost', gm2.count === 2 && total === 7, `count=${gm2.count} total=${total}`);
+  }
+
+  // ---------- Particles ----------
+  {
+    const scene = new THREE.Scene();
+    const p = new Particles(64, scene);
+    p.burst(0, 1, 0, new THREE.Color(0xff0000), 1000);
+    check('particles: burst clamps to pool max', p.count === 64, String(p.count));
+    for (let t = 0; t < 80; t++) p.update(0.05);
+    check('particles: all expire', p.count === 0, String(p.count));
+  }
+
+  // ---------- State / upgrades ----------
+  {
+    const s = createState();
+    grantXp(s, 8);
+    check('state: exact xp triggers one level-up', s.level === 2 && s.pendingLevels === 1 && s.xp === 0, JSON.stringify({ l: s.level, p: s.pendingLevels, xp: s.xp }));
+    const s2 = createState();
+    grantXp(s2, 100);
+    check('state: big xp grant cascades levels', s2.pendingLevels >= 3 && s2.xp < s2.xpNeed, JSON.stringify({ p: s2.pendingLevels, xp: s2.xp, need: s2.xpNeed }));
+    let mono = true;
+    for (let l = 1; l < 50; l++) if (xpForLevel(l + 1) <= xpForLevel(l)) mono = false;
+    check('state: xp curve strictly increasing to lvl 50', mono);
+
+    const dmgU = UPGRADES.find(u => u.name === 'Plasma Overcharge')!;
+    const s3 = createState();
+    const before = s3.dmg;
+    dmgU.apply(s3);
+    check('state: damage upgrade multiplies by 1.3', Math.abs(s3.dmg - before * 1.3) < 1e-9, String(s3.dmg));
+
+    const sat = UPGRADES[0];
+    const old = sat.count;
+    sat.count = sat.max;
+    let excluded = true;
+    for (let i = 0; i < 30; i++) if (rollUpgrades(3).includes(sat)) excluded = false;
+    sat.count = old;
+    check('state: maxed upgrades excluded from rolls', excluded);
+    const roll = rollUpgrades(3);
+    check('state: rolls are distinct', new Set(roll).size === roll.length, String(roll.length));
+  }
+
+  // ---------- Input ----------
+  {
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW' }));
+    const mv1 = { ...getMove() };
+    check('input: W maps to -z', mv1.x === 0 && mv1.z === -1, JSON.stringify(mv1));
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyD' }));
+    const mv2 = { ...getMove() };
+    check('input: diagonal is normalized', Math.abs(Math.hypot(mv2.x, mv2.z) - 1) < 1e-6, JSON.stringify(mv2));
+    window.dispatchEvent(new Event('blur'));
+    const mv3 = { ...getMove() };
+    check('input: window blur clears held keys', mv3.x === 0 && mv3.z === 0, JSON.stringify(mv3));
+  }
+
+  // ---------- HUD ----------
+  {
+    const s = createState();
+    s.hp = 50; s.time = 65; s.kills = 3;
+    hud.update(s, 1234);
+    check('hud: hp bar width tracks hp', (document.getElementById('hp-fill') as HTMLElement).style.width === '50%',
+      (document.getElementById('hp-fill') as HTMLElement).style.width);
+    check('hud: timer formats mm:ss', document.getElementById('timer')!.textContent === '01:05',
+      document.getElementById('timer')!.textContent ?? 'null');
+    check('hud: swarm count localized', document.getElementById('enemies-txt')!.textContent === (1234).toLocaleString(),
+      document.getElementById('enemies-txt')!.textContent ?? 'null');
+
+    let started = false;
+    hud.showStart(() => { started = true; });
+    (document.getElementById('start-overlay') as HTMLElement).click();
+    check('hud: start overlay click begins game', started && document.getElementById('start-overlay')!.classList.contains('hidden'));
+
+    let picked: string | null = null;
+    hud.showLevelUp(rollUpgrades(3), u => { picked = u.name; });
+    const cards = document.querySelectorAll('#cards .card');
+    check('hud: three upgrade cards rendered', cards.length === 3, String(cards.length));
+    (cards[1] as HTMLElement).click();
+    check('hud: card click picks upgrade and closes', picked !== null && document.getElementById('levelup-overlay')!.classList.contains('hidden'));
+
+    let pickedKey: string | null = null;
+    hud.showLevelUp(rollUpgrades(3), u => { pickedKey = u.name; });
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '1' }));
+    check('hud: number-key pick works', pickedKey !== null);
+
+    hud.showGameOver(s);
+    check('hud: game over shows stats', (document.getElementById('go-stats')!.innerHTML || '').includes('KILLS'));
+    document.getElementById('gameover-overlay')!.classList.add('hidden');
+  }
+}
+
+let crashed: string | null = null;
+try {
+  run();
+} catch (e) {
+  crashed = e instanceof Error ? (e.stack ?? e.message) : String(e);
+}
+
+const failed = results.filter(r => !r.pass);
+const out = document.getElementById('out')!;
+out.innerHTML =
+  `<h2 class="${failed.length || crashed ? 'fail' : 'pass'}">${crashed ? 'CRASHED' : failed.length === 0 ? 'ALL PASS' : failed.length + ' FAILED'} — ${results.length} tests</h2>` +
+  (crashed ? `<pre class="fail">${crashed}</pre>` : '') +
+  results.map(r => `<div class="${r.pass ? 'pass' : 'fail'}">${r.pass ? 'PASS' : 'FAIL'} — ${r.name}${r.detail ? ' — ' + r.detail : ''}</div>`).join('');
+
+(window as unknown as Record<string, unknown>).__testResults = {
+  total: results.length,
+  failed: failed.length,
+  crashed,
+  failures: failed,
+};
