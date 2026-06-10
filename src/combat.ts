@@ -2,7 +2,13 @@ import * as THREE from 'three/webgpu';
 import type { SpatialGrid } from './spatial';
 import type { Swarm } from './swarm';
 
-/** Auto-fired projectiles, pooled and instanced like the swarm. */
+let nextBulletId = 1;
+
+/**
+ * Auto-fired projectiles, pooled and instanced like the swarm.
+ * Hits are deduplicated by bullet id stored on the ENEMY (swarm.hitBy),
+ * which survives swap-remove compaction on both pools — slot indices don't.
+ */
 export class Bullets {
   readonly max: number;
   count = 0;
@@ -13,7 +19,7 @@ export class Bullets {
   readonly life: Float32Array;
   readonly dmg: Float32Array;
   readonly pierce: Float32Array;
-  readonly lastHit: Int32Array;
+  readonly ids: Float64Array;
   readonly mesh: THREE.InstancedMesh;
 
   constructor(max: number, scene: THREE.Scene) {
@@ -25,15 +31,19 @@ export class Bullets {
     this.life = new Float32Array(max);
     this.dmg = new Float32Array(max);
     this.pierce = new Float32Array(max);
-    this.lastHit = new Int32Array(max);
+    this.ids = new Float64Array(max);
 
     const geo = new THREE.IcosahedronGeometry(0.16, 1);
     const mat = new THREE.MeshBasicMaterial({ color: 0xaaffee });
     this.mesh = new THREE.InstancedMesh(geo, mat, max);
-    this.mesh.count = 0;
     this.mesh.frustumCulled = false;
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     scene.add(this.mesh);
+  }
+
+  private syncDraw(): void {
+    this.mesh.count = this.count;
+    this.mesh.visible = this.count > 0;
   }
 
   fire(x: number, z: number, dirX: number, dirZ: number, speed: number, dmg: number, pierce: number): void {
@@ -46,7 +56,7 @@ export class Bullets {
     this.life[i] = 1.6;
     this.dmg[i] = dmg;
     this.pierce[i] = pierce;
-    this.lastHit[i] = -1;
+    this.ids[i] = nextBulletId++;
 
     const m = this.mesh.instanceMatrix.array as Float32Array;
     const o = i * 16;
@@ -56,7 +66,7 @@ export class Bullets {
     m[o + 13] = 0.7;
     m[o + 14] = z;
     m[o + 15] = 1;
-    this.mesh.count = this.count;
+    this.syncDraw();
   }
 
   private remove(i: number): void {
@@ -69,15 +79,15 @@ export class Bullets {
       this.life[i] = this.life[last];
       this.dmg[i] = this.dmg[last];
       this.pierce[i] = this.pierce[last];
-      this.lastHit[i] = this.lastHit[last];
+      this.ids[i] = this.ids[last];
       const m = this.mesh.instanceMatrix.array as Float32Array;
       m.copyWithin(i * 16, last * 16, last * 16 + 16);
     }
-    this.mesh.count = this.count;
+    this.syncDraw();
   }
 
   update(dt: number, swarm: Swarm, grid: SpatialGrid): void {
-    const { px, pz, vx, vz, life, dmg, pierce, lastHit } = this;
+    const { px, pz, vx, vz, life, dmg, pierce, ids } = this;
     const { cellStart, indices, dim } = grid;
     const m = this.mesh.instanceMatrix.array as Float32Array;
 
@@ -85,26 +95,37 @@ export class Bullets {
       life[i] -= dt;
       if (life[i] <= 0) { this.remove(i); continue; }
 
+      const ox = px[i], oz = pz[i]; // segment start (pre-move)
       const x = (px[i] += vx[i] * dt);
       const z = (pz[i] += vz[i] * dt);
+      const sx = x - ox, sz = z - oz;
+      const segLen2 = sx * sx + sz * sz + 1e-12;
 
       let dead = false;
       const cx = grid.cellX(x), cz = grid.cellZ(z);
+      // 3x3 cells around the segment END cover the swept path at any
+      // playable dt (worst case step 1.8 + elite radius 1.85 < 2 cells)
       outer:
       for (let gz = cz > 0 ? cz - 1 : 0; gz <= (cz < dim - 1 ? cz + 1 : cz); gz++) {
         for (let gx = cx > 0 ? cx - 1 : 0; gx <= (cx < dim - 1 ? cx + 1 : cx); gx++) {
           const c = gz * dim + gx;
           for (let k = cellStart[c]; k < cellStart[c + 1]; k++) {
             const j = indices[k];
-            if (j >= swarm.count || swarm.hp[j] <= 0 || j === lastHit[i]) continue;
-            const dx = swarm.posX[j] - x, dz = swarm.posZ[j] - z;
+            if (j >= swarm.count || swarm.hp[j] <= 0 || swarm.hitBy[j] === ids[i]) continue;
+            // swept segment-vs-circle: closest approach of enemy center
+            // to the bullet's path this frame (prevents tunneling at low FPS)
+            const ex = swarm.posX[j] - ox, ez = swarm.posZ[j] - oz;
+            let t = (ex * sx + ez * sz) / segLen2;
+            if (t < 0) t = 0; else if (t > 1) t = 1;
+            const qx = ex - t * sx, qz = ez - t * sz;
             const minD = swarm.radius[j] + 0.25;
-            if (dx * dx + dz * dz < minD * minD) {
+            if (qx * qx + qz * qz < minD * minD) {
               swarm.hp[j] -= dmg[i];
-              // small knockback along bullet travel
-              swarm.posX[j] += vx[i] * dt * 1.5;
-              swarm.posZ[j] += vz[i] * dt * 1.5;
-              lastHit[i] = j;
+              swarm.hitBy[j] = ids[i];
+              // fixed knockback impulse, independent of frame rate
+              const kb = 0.4 / Math.sqrt(vx[i] * vx[i] + vz[i] * vz[i]);
+              swarm.posX[j] += vx[i] * kb;
+              swarm.posZ[j] += vz[i] * kb;
               if (--pierce[i] < 0) { dead = true; break outer; }
             }
           }
@@ -118,7 +139,12 @@ export class Bullets {
       m[o + 14] = z;
     }
 
-    this.mesh.instanceMatrix.needsUpdate = true;
+    if (this.count > 0) {
+      const im = this.mesh.instanceMatrix;
+      im.clearUpdateRanges();
+      im.addUpdateRange(0, this.count * 16);
+      im.needsUpdate = true;
+    }
   }
 }
 
@@ -140,10 +166,14 @@ export class Gems {
     const geo = new THREE.OctahedronGeometry(0.26);
     const mat = new THREE.MeshBasicMaterial({ color: 0x44ff99 });
     this.mesh = new THREE.InstancedMesh(geo, mat, max);
-    this.mesh.count = 0;
     this.mesh.frustumCulled = false;
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     scene.add(this.mesh);
+  }
+
+  private syncDraw(): void {
+    this.mesh.count = this.count;
+    this.mesh.visible = this.count > 0;
   }
 
   spawn(x: number, z: number, value: number): void {
@@ -156,7 +186,7 @@ export class Gems {
     this.px[i] = x;
     this.pz[i] = z;
     this.val[i] = value;
-    this.mesh.count = this.count;
+    this.syncDraw();
   }
 
   private remove(i: number): void {
@@ -165,8 +195,12 @@ export class Gems {
       this.px[i] = this.px[last];
       this.pz[i] = this.pz[last];
       this.val[i] = this.val[last];
+      // move the matrix too, or the swapped-in gem renders one frame
+      // at the picked-up gem's position (right at the player's feet)
+      const m = this.mesh.instanceMatrix.array as Float32Array;
+      m.copyWithin(i * 16, last * 16, last * 16 + 16);
     }
-    this.mesh.count = this.count;
+    this.syncDraw();
   }
 
   update(dt: number, time: number, playerX: number, playerZ: number, magnet: number, onPickup: (value: number) => void): void {
@@ -199,7 +233,12 @@ export class Gems {
       m[o + 15] = 1;
     }
 
-    this.mesh.instanceMatrix.needsUpdate = true;
+    if (this.count > 0) {
+      const im = this.mesh.instanceMatrix;
+      im.clearUpdateRanges();
+      im.addUpdateRange(0, this.count * 16);
+      im.needsUpdate = true;
+    }
   }
 }
 
@@ -233,7 +272,6 @@ export class Particles {
     const geo = new THREE.TetrahedronGeometry(0.15);
     const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
     this.mesh = new THREE.InstancedMesh(geo, mat, max);
-    this.mesh.count = 0;
     this.mesh.frustumCulled = false;
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(max * 3), 3);
@@ -241,8 +279,14 @@ export class Particles {
     scene.add(this.mesh);
   }
 
+  private syncDraw(): void {
+    this.mesh.count = this.count;
+    this.mesh.visible = this.count > 0;
+  }
+
   burst(x: number, y: number, z: number, color: THREE.Color, n: number, speed = 9): void {
     const col = this.mesh.instanceColor!.array as Float32Array;
+    const m = this.mesh.instanceMatrix.array as Float32Array;
     for (let s = 0; s < n; s++) {
       if (this.count >= this.max) break;
       const i = this.count++;
@@ -260,9 +304,22 @@ export class Particles {
       col[i * 3] = color.r;
       col[i * 3 + 1] = color.g;
       col[i * 3 + 2] = color.b;
+      // write the spawn matrix immediately so a burst is visible even on
+      // frames where update() doesn't run (e.g. the death explosion)
+      const o = i * 16;
+      m.fill(0, o, o + 16);
+      m[o] = m[o + 5] = m[o + 10] = this.size[i];
+      m[o + 12] = x;
+      m[o + 13] = y;
+      m[o + 14] = z;
+      m[o + 15] = 1;
     }
+    this.mesh.instanceColor!.addUpdateRange(0, this.count * 3);
     this.mesh.instanceColor!.needsUpdate = true;
-    this.mesh.count = this.count;
+    const im = this.mesh.instanceMatrix;
+    im.addUpdateRange(0, this.count * 16);
+    im.needsUpdate = true;
+    this.syncDraw();
   }
 
   private remove(i: number): void {
@@ -277,11 +334,14 @@ export class Particles {
       this.life[i] = this.life[last];
       this.maxLife[i] = this.maxLife[last];
       this.size[i] = this.size[last];
+      const m = this.mesh.instanceMatrix.array as Float32Array;
+      m.copyWithin(i * 16, last * 16, last * 16 + 16);
       const col = this.mesh.instanceColor!.array as Float32Array;
       col.copyWithin(i * 3, last * 3, last * 3 + 3);
+      this.mesh.instanceColor!.addUpdateRange(0, this.count * 3);
       this.mesh.instanceColor!.needsUpdate = true;
     }
-    this.mesh.count = this.count;
+    this.syncDraw();
   }
 
   update(dt: number): void {
@@ -303,6 +363,11 @@ export class Particles {
       m[o + 14] = this.pz[i];
       m[o + 15] = 1;
     }
-    this.mesh.instanceMatrix.needsUpdate = true;
+    if (this.count > 0) {
+      const im = this.mesh.instanceMatrix;
+      im.clearUpdateRanges();
+      im.addUpdateRange(0, this.count * 16);
+      im.needsUpdate = true;
+    }
   }
 }

@@ -77,6 +77,11 @@ function run(): void {
     let aliveOk = true;
     for (let i = 0; i < sw.count; i++) if (sw.hp[i] <= 0) aliveOk = false;
     check('swarm: survivors all alive after sweep', aliveOk);
+    while (sw.count > 0) sw.kill(0);
+    check('swarm: mesh hidden when pool empties (no phantom instance)', sw.mesh.visible === false && sw.mesh.count === 0,
+      `visible=${sw.mesh.visible} count=${sw.mesh.count}`);
+    sw.spawn(0, 1, 1);
+    check('swarm: mesh visible again on respawn', sw.mesh.visible === true && sw.mesh.count === 1);
   }
   {
     const scene = new THREE.Scene();
@@ -122,8 +127,41 @@ function run(): void {
       g.build(sw.posX, sw.posZ, sw.count, 0, 0);
       b.update(0.1, sw, g);
     }
-    check('bullets: lastHit prevents repeat hits on same enemy', sw.hp[0] === 125, `hp=${sw.hp[0]}`);
+    check('bullets: hit memory prevents repeat hits on same enemy', sw.hp[0] === 125, `hp=${sw.hp[0]}`);
     check('bullets: piercing bullet survives the hit', b.count === 1, String(b.count));
+  }
+  {
+    // hit memory must survive swarm compaction (identity, not slot index)
+    const scene = new THREE.Scene();
+    const sw = new Swarm(8, scene);
+    sw.spawn(0, 30, 0); // slot 0: far grunt, dies mid-flight
+    sw.spawn(3, 2, 0);  // slot 1: elite being pierced
+    const b = new Bullets(16, scene);
+    b.fire(0, 0, 1, 0, 1, 5, 9);
+    const g = new SpatialGrid(2.5, 32, 8);
+    g.build(sw.posX, sw.posZ, sw.count, 0, 0);
+    b.update(0.1, sw, g);
+    b.update(0.1, sw, g); // second step overlaps the elite -> one hit
+    const hpAfterHit = sw.hp[1];
+    sw.hp[0] = 0;
+    sw.sweepDead(() => {}); // grunt dies, elite swaps into slot 0
+    for (let t = 0; t < 8; t++) {
+      g.build(sw.posX, sw.posZ, sw.count, 0, 0);
+      b.update(0.1, sw, g);
+    }
+    check('bullets: hit memory survives swarm compaction', hpAfterHit === 125 && sw.hp[0] === 125, `afterHit=${hpAfterHit} final=${sw.hp[0]}`);
+  }
+  {
+    // swept collision: both segment endpoints outside the hit circle
+    const scene = new THREE.Scene();
+    const sw = new Swarm(4, scene);
+    sw.spawn(0, 3.4, 0); // grunt, hit radius 0.75
+    const b = new Bullets(4, scene);
+    b.fire(2.5, 0, 1, 0, 36, 1, 0); // dt 0.05 -> 1.8-unit step right across it
+    const g = new SpatialGrid(2.5, 32, 4);
+    g.build(sw.posX, sw.posZ, 1, 0, 0);
+    b.update(0.05, sw, g);
+    check('bullets: swept collision prevents tunneling at low FPS', sw.hp[0] < 3, `hp=${sw.hp[0]}`);
   }
   {
     const scene = new THREE.Scene();
@@ -151,6 +189,17 @@ function run(): void {
     gm2.spawn(70, 70, 4);
     const total = gm2.val[0] + gm2.val[1];
     check('gems: pool overflow folds value, none lost', gm2.count === 2 && total === 7, `count=${gm2.count} total=${total}`);
+
+    // swap-remove must move the instance matrix with the gem
+    const gm3 = new Gems(4, scene);
+    gm3.spawn(5, 0, 1); // picked up (player at 5,0)
+    gm3.spawn(9, 9, 2); // survivor, swaps into slot 0
+    let got = 0;
+    gm3.update(1 / 60, 0, 5, 0, 4, v => { got += v; });
+    const m3 = gm3.mesh.instanceMatrix.array as Float32Array;
+    check('gems: swapped-in gem keeps its own matrix (no 1-frame teleport)',
+      got === 1 && gm3.count === 1 && Math.abs(m3[12] - 9) < 0.2 && Math.abs(m3[14] - 9) < 0.2,
+      `got=${got} m=[${m3[12].toFixed(1)},${m3[14].toFixed(1)}]`);
   }
 
   // ---------- Particles ----------
@@ -161,6 +210,19 @@ function run(): void {
     check('particles: burst clamps to pool max', p.count === 64, String(p.count));
     for (let t = 0; t < 80; t++) p.update(0.05);
     check('particles: all expire', p.count === 0, String(p.count));
+    check('particles: mesh hidden when pool empties', p.mesh.visible === false);
+
+    // bursts must be visible even on frames where update() never runs
+    // (the death explosion fires after the sim stops)
+    const p2 = new Particles(16, scene);
+    p2.burst(7, 2, -3, new THREE.Color(0xffffff), 4);
+    const pm = p2.mesh.instanceMatrix.array as Float32Array;
+    let spawnMatricesOk = true;
+    for (let i = 0; i < 4; i++) {
+      const o = i * 16;
+      if (pm[o + 12] !== 7 || pm[o + 13] !== 2 || pm[o + 14] !== -3 || pm[o] === 0) spawnMatricesOk = false;
+    }
+    check('particles: burst writes spawn matrices immediately', spawnMatricesOk);
   }
 
   // ---------- State / upgrades ----------
@@ -190,6 +252,11 @@ function run(): void {
     check('state: maxed upgrades excluded from rolls', excluded);
     const roll = rollUpgrades(3);
     check('state: rolls are distinct', new Set(roll).size === roll.length, String(roll.length));
+
+    const saved = UPGRADES.map(u => u.count);
+    UPGRADES.forEach(u => { u.count = u.max; });
+    check('state: fully-maxed pool rolls empty (softlock guard input)', rollUpgrades(3).length === 0);
+    UPGRADES.forEach((u, i) => { u.count = saved[i]; });
   }
 
   // ---------- Input ----------
@@ -210,8 +277,8 @@ function run(): void {
     const s = createState();
     s.hp = 50; s.time = 65; s.kills = 3;
     hud.update(s, 1234);
-    check('hud: hp bar width tracks hp', (document.getElementById('hp-fill') as HTMLElement).style.width === '50%',
-      (document.getElementById('hp-fill') as HTMLElement).style.width);
+    check('hud: hp bar scales with hp', (document.getElementById('hp-fill') as HTMLElement).style.transform === 'scaleX(0.5)',
+      (document.getElementById('hp-fill') as HTMLElement).style.transform);
     check('hud: timer formats mm:ss', document.getElementById('timer')!.textContent === '01:05',
       document.getElementById('timer')!.textContent ?? 'null');
     check('hud: swarm count localized', document.getElementById('enemies-txt')!.textContent === (1234).toLocaleString(),
@@ -231,6 +298,8 @@ function run(): void {
 
     let pickedKey: string | null = null;
     hud.showLevelUp(rollUpgrades(3), u => { pickedKey = u.name; });
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '1', repeat: true }));
+    check('hud: key auto-repeat ignored (no blind pick)', pickedKey === null);
     window.dispatchEvent(new KeyboardEvent('keydown', { key: '1' }));
     check('hud: number-key pick works', pickedKey !== null);
 

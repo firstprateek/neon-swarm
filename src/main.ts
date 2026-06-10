@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { pass } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
-import { createState, grantXp, rollUpgrades } from './state';
+import { createState, grantXp, rollUpgrades, UPGRADES } from './state';
 import { getMove } from './input';
 import { SpatialGrid } from './spatial';
 import { Swarm, ENEMY_TYPES } from './swarm';
@@ -184,8 +184,15 @@ async function start() {
   hud.showStart(() => { started = true; });
 
   function openLevelUp(): void {
+    const choices = rollUpgrades(3);
+    if (choices.length === 0) {
+      // every upgrade maxed — don't softlock on an empty card list
+      state.pendingLevels = 0;
+      leveling = false;
+      return;
+    }
     leveling = true;
-    hud.showLevelUp(rollUpgrades(3), u => {
+    hud.showLevelUp(choices, u => {
       u.count++;
       u.apply(state);
       state.pendingLevels--;
@@ -275,13 +282,14 @@ async function start() {
   // step() drives the real update/render path with a fixed dt so tests
   // stay deterministic even where rAF is throttled (hidden/headless tabs)
   (window as unknown as Record<string, unknown>).__dbg = {
-    state, swarm, bullets, gems, particles, player, camera,
+    state, swarm, bullets, gems, particles, player, camera, upgrades: UPGRADES,
     flags: () => ({ started, over, leveling }),
     backend: () => (onWebGPU() ? 'webgpu' : 'webgl2'),
     bloom: () => !!post,
     step: (dt = 1 / 60, frames = 1) => {
       for (let i = 0; i < frames; i++) {
         if (started && !over && !leveling) update(dt);
+        else if (over) particles.update(dt);
         hud.tick(dt);
       }
       if (post) post.render();
@@ -344,7 +352,12 @@ async function start() {
     gems.update(dt, state.time, player.position.x, player.position.z, state.magnet, v => grantXp(state, v));
     particles.update(dt);
 
-    if (state.hp <= 0) gameOver();
+    if (state.hp <= 0) {
+      // death ends the frame — never open a level-up under the game-over screen
+      gameOver();
+      hud.update(state, swarm.count);
+      return;
+    }
     if (state.pendingLevels > 0 && !leveling) openLevelUp();
 
     hud.update(state, swarm.count);
@@ -352,11 +365,12 @@ async function start() {
 
   renderer.setAnimationLoop(() => {
     const now = performance.now();
-    const dt = Math.min(0.05, (now - prev) / 1000);
+    const rawDt = (now - prev) / 1000;
+    const dt = Math.min(0.05, rawDt);
     prev = now;
 
     fpsFrames++;
-    fpsTime += dt;
+    fpsTime += rawDt; // wall clock, so the readout stays honest below 20 FPS
     if (fpsTime >= 0.5) {
       hud.setFps(fpsFrames / fpsTime);
       fpsFrames = 0;
@@ -364,6 +378,7 @@ async function start() {
     }
 
     if (started && !over && !leveling) update(dt);
+    else if (over) particles.update(dt); // let the death explosion play out
     hud.tick(dt);
 
     if (post) post.render();

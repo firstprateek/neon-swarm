@@ -19,11 +19,19 @@ export const ENEMY_TYPES: EnemyType[] = [
 ];
 
 const PLAYER_RADIUS = 0.8;
+const BOB_BUCKETS = 64;
 
 /**
  * All enemies live in packed structure-of-arrays buffers and render as a
  * single InstancedMesh (one draw call for the entire horde). Dead enemies
  * are swap-removed so the hot loops always run over a dense [0, count) range.
+ *
+ * The mesh is constructed with count = capacity so the renderer's node graph
+ * is built for the full instanced path on the very first draw (the backing
+ * matrices are all-zero, which renders as invisible degenerate geometry);
+ * from the first spawn on, count tracks the live entity count and the mesh
+ * is hidden entirely whenever the pool is empty — count = 0 would otherwise
+ * still draw one phantom instance under the WebGPU renderer.
  */
 export class Swarm {
   readonly max: number;
@@ -36,10 +44,13 @@ export class Swarm {
   readonly radius: Float32Array;
   readonly dps: Float32Array;
   readonly xpv: Float32Array;
-  readonly seed: Float32Array;
+  /** id of the last bullet that damaged this enemy (survives compaction) */
+  readonly hitBy: Float64Array;
+  readonly bob: Uint8Array;
   readonly type: Uint8Array;
 
   readonly mesh: THREE.InstancedMesh;
+  private readonly pulse = new Float32Array(BOB_BUCKETS);
 
   constructor(max: number, scene: THREE.Scene) {
     this.max = max;
@@ -50,18 +61,23 @@ export class Swarm {
     this.radius = new Float32Array(max);
     this.dps = new Float32Array(max);
     this.xpv = new Float32Array(max);
-    this.seed = new Float32Array(max);
+    this.hitBy = new Float64Array(max);
+    this.bob = new Uint8Array(max);
     this.type = new Uint8Array(max);
 
     const geo = new THREE.IcosahedronGeometry(0.5, 0);
     const mat = new THREE.MeshStandardMaterial({ flatShading: true, roughness: 0.55, metalness: 0.15 });
     this.mesh = new THREE.InstancedMesh(geo, mat, max);
-    this.mesh.count = 0;
     this.mesh.frustumCulled = false;
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(max * 3), 3);
     this.mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
     scene.add(this.mesh);
+  }
+
+  private syncDraw(): void {
+    this.mesh.count = this.count;
+    this.mesh.visible = this.count > 0;
   }
 
   spawn(typeIdx: number, x: number, z: number): void {
@@ -75,7 +91,8 @@ export class Swarm {
     this.radius[i] = t.radius;
     this.dps[i] = t.dps;
     this.xpv[i] = t.xp;
-    this.seed[i] = Math.random() * Math.PI * 2;
+    this.hitBy[i] = 0; // slot may be recycled — forget old bullet ids
+    this.bob[i] = (Math.random() * BOB_BUCKETS) | 0;
     this.type[i] = typeIdx;
 
     const m = this.mesh.instanceMatrix.array as Float32Array;
@@ -92,9 +109,10 @@ export class Swarm {
     col[i * 3] = Math.min(1, t.color.r * v);
     col[i * 3 + 1] = Math.min(1, t.color.g * v);
     col[i * 3 + 2] = Math.min(1, t.color.b * v);
+    this.mesh.instanceColor!.addUpdateRange(0, this.count * 3);
     this.mesh.instanceColor!.needsUpdate = true;
 
-    this.mesh.count = this.count;
+    this.syncDraw();
   }
 
   /** Swap-remove slot i; the (alive) last enemy moves into it. */
@@ -108,36 +126,41 @@ export class Swarm {
       this.radius[i] = this.radius[last];
       this.dps[i] = this.dps[last];
       this.xpv[i] = this.xpv[last];
-      this.seed[i] = this.seed[last];
+      this.hitBy[i] = this.hitBy[last];
+      this.bob[i] = this.bob[last];
       this.type[i] = this.type[last];
       const m = this.mesh.instanceMatrix.array as Float32Array;
       m.copyWithin(i * 16, last * 16, last * 16 + 16);
       const col = this.mesh.instanceColor!.array as Float32Array;
       col.copyWithin(i * 3, last * 3, last * 3 + 3);
+      this.mesh.instanceColor!.addUpdateRange(0, this.count * 3);
       this.mesh.instanceColor!.needsUpdate = true;
     }
-    this.mesh.count = this.count;
+    this.syncDraw();
   }
 
   /**
    * Chase the player with local separation so the horde packs instead of
    * stacking. Returns contact damage dealt to the player this frame.
-   * Iterating a swept dead-list from the top is safe with swap-remove:
-   * the element swapped in always comes from an index already processed.
    */
   update(dt: number, time: number, playerX: number, playerZ: number, grid: SpatialGrid): number {
-    const { posX, posZ, speed, radius, dps, seed, count } = this;
+    const { posX, posZ, speed, radius, dps, bob, count, pulse } = this;
     const m = this.mesh.instanceMatrix.array as Float32Array;
     const { cellStart, indices, dim } = grid;
     let playerDamage = 0;
+
+    // 64-entry pulse LUT replaces 20k Math.sin calls for the cosmetic bob
+    for (let b = 0; b < BOB_BUCKETS; b++) {
+      pulse[b] = 1 + 0.3 * Math.abs(Math.sin(time * 4 + b * ((Math.PI * 2) / BOB_BUCKETS)));
+    }
 
     for (let i = 0; i < count; i++) {
       const x = posX[i], z = posZ[i], r = radius[i];
       const dxp = playerX - x, dzp = playerZ - z;
       const d = Math.sqrt(dxp * dxp + dzp * dzp) + 1e-6;
 
-      let vx = (dxp / d) * speed[i];
-      let vz = (dzp / d) * speed[i];
+      const vx = (dxp / d) * speed[i];
+      const vz = (dzp / d) * speed[i];
 
       // Local separation: push away from a few overlapping neighbors.
       // Capped per enemy so worst-case cost stays bounded in dense packs.
@@ -173,11 +196,16 @@ export class Swarm {
 
       const o = i * 16;
       m[o + 12] = nx;
-      m[o + 13] = r * (1 + 0.3 * Math.abs(Math.sin(time * 4 + seed[i])));
+      m[o + 13] = r * pulse[bob[i]];
       m[o + 14] = nz;
     }
 
-    this.mesh.instanceMatrix.needsUpdate = true;
+    if (count > 0) {
+      const im = this.mesh.instanceMatrix;
+      im.clearUpdateRanges();
+      im.addUpdateRange(0, count * 16); // upload only the live slice
+      im.needsUpdate = true;
+    }
     return playerDamage;
   }
 

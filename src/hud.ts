@@ -22,16 +22,43 @@ const goStats = el('go-stats');
 
 let vignetteOpacity = 0;
 
+// dirty-check cache: the HUD runs every frame, but the DOM (and layout)
+// should only be touched when a displayed value actually changes
+const last = { hpQ: -1, hpTxt: '', xpQ: -1, level: -1, secs: -1, kills: -1, enemies: -1 };
+
 export function update(state: GameState, enemyCount: number): void {
-  hpFill.style.width = `${Math.max(0, (state.hp / state.maxHp) * 100)}%`;
-  hpLabel.textContent = `${Math.ceil(Math.max(0, state.hp))}/${state.maxHp}`;
-  xpFill.style.width = `${Math.min(100, (state.xp / state.xpNeed) * 100)}%`;
-  levelTxt.textContent = `LV ${state.level}`;
-  const mins = (state.time / 60) | 0;
-  const secs = (state.time % 60) | 0;
-  timerTxt.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-  killsTxt.textContent = String(state.kills);
-  enemiesTxt.textContent = enemyCount.toLocaleString();
+  const hpQ = Math.round(Math.max(0, Math.min(1, state.hp / state.maxHp)) * 400);
+  if (hpQ !== last.hpQ) {
+    last.hpQ = hpQ;
+    hpFill.style.transform = `scaleX(${hpQ / 400})`;
+  }
+  const hpTxt = `${Math.ceil(Math.max(0, state.hp))}/${state.maxHp}`;
+  if (hpTxt !== last.hpTxt) {
+    last.hpTxt = hpTxt;
+    hpLabel.textContent = hpTxt;
+  }
+  const xpQ = Math.round(Math.min(1, state.xp / state.xpNeed) * 400);
+  if (xpQ !== last.xpQ) {
+    last.xpQ = xpQ;
+    xpFill.style.transform = `scaleX(${xpQ / 400})`;
+  }
+  if (state.level !== last.level) {
+    last.level = state.level;
+    levelTxt.textContent = `LV ${state.level}`;
+  }
+  const secs = state.time | 0;
+  if (secs !== last.secs) {
+    last.secs = secs;
+    timerTxt.textContent = `${String((secs / 60) | 0).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
+  }
+  if (state.kills !== last.kills) {
+    last.kills = state.kills;
+    killsTxt.textContent = String(state.kills);
+  }
+  if (enemyCount !== last.enemies) {
+    last.enemies = enemyCount;
+    enemiesTxt.textContent = enemyCount.toLocaleString();
+  }
 }
 
 export function setFps(fps: number): void {
@@ -68,12 +95,14 @@ export function showStart(onStart: () => void): void {
 
 export function showLevelUp(choices: Upgrade[], onPick: (u: Upgrade) => void): void {
   cards.innerHTML = '';
+  const openedAt = performance.now();
   const pick = (u: Upgrade) => {
     window.removeEventListener('keydown', keyHandler);
     levelupOverlay.classList.add('hidden');
     onPick(u);
   };
   const keyHandler = (e: KeyboardEvent) => {
+    if (e.repeat) return; // held keys must not blind-pick queued level-ups
     const n = Number(e.key);
     if (n >= 1 && n <= choices.length) pick(choices[n - 1]);
   };
@@ -85,7 +114,12 @@ export function showLevelUp(choices: Upgrade[], onPick: (u: Upgrade) => void): v
       `<div class="name">${u.name}</div>` +
       `<div class="desc">${u.desc}</div>` +
       `<div class="stacks">owned ${u.count}/${u.max}</div>`;
-    card.addEventListener('click', () => pick(u));
+    card.addEventListener('click', ev => {
+      // a real double-click on a re-opened modal lands on the same spot;
+      // synthetic test clicks (isTrusted=false) are exempt from the guard
+      if (ev.isTrusted && performance.now() - openedAt < 150) return;
+      pick(u);
+    });
     cards.appendChild(card);
   });
   window.addEventListener('keydown', keyHandler);
