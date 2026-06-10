@@ -1,0 +1,308 @@
+import * as THREE from 'three/webgpu';
+import type { SpatialGrid } from './spatial';
+import type { Swarm } from './swarm';
+
+/** Auto-fired projectiles, pooled and instanced like the swarm. */
+export class Bullets {
+  readonly max: number;
+  count = 0;
+  readonly px: Float32Array;
+  readonly pz: Float32Array;
+  readonly vx: Float32Array;
+  readonly vz: Float32Array;
+  readonly life: Float32Array;
+  readonly dmg: Float32Array;
+  readonly pierce: Float32Array;
+  readonly lastHit: Int32Array;
+  readonly mesh: THREE.InstancedMesh;
+
+  constructor(max: number, scene: THREE.Scene) {
+    this.max = max;
+    this.px = new Float32Array(max);
+    this.pz = new Float32Array(max);
+    this.vx = new Float32Array(max);
+    this.vz = new Float32Array(max);
+    this.life = new Float32Array(max);
+    this.dmg = new Float32Array(max);
+    this.pierce = new Float32Array(max);
+    this.lastHit = new Int32Array(max);
+
+    const geo = new THREE.IcosahedronGeometry(0.16, 1);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xaaffee });
+    this.mesh = new THREE.InstancedMesh(geo, mat, max);
+    this.mesh.count = 0;
+    this.mesh.frustumCulled = false;
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    scene.add(this.mesh);
+  }
+
+  fire(x: number, z: number, dirX: number, dirZ: number, speed: number, dmg: number, pierce: number): void {
+    if (this.count >= this.max) return;
+    const i = this.count++;
+    this.px[i] = x;
+    this.pz[i] = z;
+    this.vx[i] = dirX * speed;
+    this.vz[i] = dirZ * speed;
+    this.life[i] = 1.6;
+    this.dmg[i] = dmg;
+    this.pierce[i] = pierce;
+    this.lastHit[i] = -1;
+
+    const m = this.mesh.instanceMatrix.array as Float32Array;
+    const o = i * 16;
+    m.fill(0, o, o + 16);
+    m[o] = m[o + 5] = m[o + 10] = 1;
+    m[o + 12] = x;
+    m[o + 13] = 0.7;
+    m[o + 14] = z;
+    m[o + 15] = 1;
+    this.mesh.count = this.count;
+  }
+
+  private remove(i: number): void {
+    const last = --this.count;
+    if (i !== last) {
+      this.px[i] = this.px[last];
+      this.pz[i] = this.pz[last];
+      this.vx[i] = this.vx[last];
+      this.vz[i] = this.vz[last];
+      this.life[i] = this.life[last];
+      this.dmg[i] = this.dmg[last];
+      this.pierce[i] = this.pierce[last];
+      this.lastHit[i] = this.lastHit[last];
+      const m = this.mesh.instanceMatrix.array as Float32Array;
+      m.copyWithin(i * 16, last * 16, last * 16 + 16);
+    }
+    this.mesh.count = this.count;
+  }
+
+  update(dt: number, swarm: Swarm, grid: SpatialGrid): void {
+    const { px, pz, vx, vz, life, dmg, pierce, lastHit } = this;
+    const { cellStart, indices, dim } = grid;
+    const m = this.mesh.instanceMatrix.array as Float32Array;
+
+    for (let i = this.count - 1; i >= 0; i--) {
+      life[i] -= dt;
+      if (life[i] <= 0) { this.remove(i); continue; }
+
+      const x = (px[i] += vx[i] * dt);
+      const z = (pz[i] += vz[i] * dt);
+
+      let dead = false;
+      const cx = grid.cellX(x), cz = grid.cellZ(z);
+      outer:
+      for (let gz = cz > 0 ? cz - 1 : 0; gz <= (cz < dim - 1 ? cz + 1 : cz); gz++) {
+        for (let gx = cx > 0 ? cx - 1 : 0; gx <= (cx < dim - 1 ? cx + 1 : cx); gx++) {
+          const c = gz * dim + gx;
+          for (let k = cellStart[c]; k < cellStart[c + 1]; k++) {
+            const j = indices[k];
+            if (j >= swarm.count || swarm.hp[j] <= 0 || j === lastHit[i]) continue;
+            const dx = swarm.posX[j] - x, dz = swarm.posZ[j] - z;
+            const minD = swarm.radius[j] + 0.25;
+            if (dx * dx + dz * dz < minD * minD) {
+              swarm.hp[j] -= dmg[i];
+              // small knockback along bullet travel
+              swarm.posX[j] += vx[i] * dt * 1.5;
+              swarm.posZ[j] += vz[i] * dt * 1.5;
+              lastHit[i] = j;
+              if (--pierce[i] < 0) { dead = true; break outer; }
+            }
+          }
+        }
+      }
+
+      if (dead) { this.remove(i); continue; }
+
+      const o = i * 16;
+      m[o + 12] = x;
+      m[o + 14] = z;
+    }
+
+    this.mesh.instanceMatrix.needsUpdate = true;
+  }
+}
+
+/** XP gems dropped by dead enemies; magnetized to the player. */
+export class Gems {
+  readonly max: number;
+  count = 0;
+  readonly px: Float32Array;
+  readonly pz: Float32Array;
+  readonly val: Float32Array;
+  readonly mesh: THREE.InstancedMesh;
+
+  constructor(max: number, scene: THREE.Scene) {
+    this.max = max;
+    this.px = new Float32Array(max);
+    this.pz = new Float32Array(max);
+    this.val = new Float32Array(max);
+
+    const geo = new THREE.OctahedronGeometry(0.26);
+    const mat = new THREE.MeshBasicMaterial({ color: 0x44ff99 });
+    this.mesh = new THREE.InstancedMesh(geo, mat, max);
+    this.mesh.count = 0;
+    this.mesh.frustumCulled = false;
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    scene.add(this.mesh);
+  }
+
+  spawn(x: number, z: number, value: number): void {
+    if (this.count >= this.max) {
+      // pool exhausted: fold the XP into an existing gem so nothing is lost
+      this.val[(Math.random() * this.count) | 0] += value;
+      return;
+    }
+    const i = this.count++;
+    this.px[i] = x;
+    this.pz[i] = z;
+    this.val[i] = value;
+    this.mesh.count = this.count;
+  }
+
+  private remove(i: number): void {
+    const last = --this.count;
+    if (i !== last) {
+      this.px[i] = this.px[last];
+      this.pz[i] = this.pz[last];
+      this.val[i] = this.val[last];
+    }
+    this.mesh.count = this.count;
+  }
+
+  update(dt: number, time: number, playerX: number, playerZ: number, magnet: number, onPickup: (value: number) => void): void {
+    const { px, pz, val } = this;
+    const m = this.mesh.instanceMatrix.array as Float32Array;
+    const cs = Math.cos(time * 3), sn = Math.sin(time * 3);
+
+    for (let i = this.count - 1; i >= 0; i--) {
+      const dx = playerX - px[i], dz = playerZ - pz[i];
+      const d = Math.sqrt(dx * dx + dz * dz) + 1e-6;
+
+      if (d < 1.3) {
+        onPickup(val[i]);
+        this.remove(i);
+        continue;
+      }
+      if (d < magnet) {
+        const pull = (22 * (1 - d / magnet) + 6) * dt;
+        px[i] += (dx / d) * pull;
+        pz[i] += (dz / d) * pull;
+      }
+
+      const o = i * 16;
+      m[o] = cs;      m[o + 1] = 0; m[o + 2] = -sn;     m[o + 3] = 0;
+      m[o + 4] = 0;   m[o + 5] = 1; m[o + 6] = 0;       m[o + 7] = 0;
+      m[o + 8] = sn;  m[o + 9] = 0; m[o + 10] = cs;     m[o + 11] = 0;
+      m[o + 12] = px[i];
+      m[o + 13] = 0.45 + Math.sin(time * 4 + i) * 0.1;
+      m[o + 14] = pz[i];
+      m[o + 15] = 1;
+    }
+
+    this.mesh.instanceMatrix.needsUpdate = true;
+  }
+}
+
+/** Short-lived explosion shards for kill feedback. */
+export class Particles {
+  readonly max: number;
+  count = 0;
+  readonly px: Float32Array;
+  readonly py: Float32Array;
+  readonly pz: Float32Array;
+  readonly vx: Float32Array;
+  readonly vy: Float32Array;
+  readonly vz: Float32Array;
+  readonly life: Float32Array;
+  readonly maxLife: Float32Array;
+  readonly size: Float32Array;
+  readonly mesh: THREE.InstancedMesh;
+
+  constructor(max: number, scene: THREE.Scene) {
+    this.max = max;
+    this.px = new Float32Array(max);
+    this.py = new Float32Array(max);
+    this.pz = new Float32Array(max);
+    this.vx = new Float32Array(max);
+    this.vy = new Float32Array(max);
+    this.vz = new Float32Array(max);
+    this.life = new Float32Array(max);
+    this.maxLife = new Float32Array(max);
+    this.size = new Float32Array(max);
+
+    const geo = new THREE.TetrahedronGeometry(0.15);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    this.mesh = new THREE.InstancedMesh(geo, mat, max);
+    this.mesh.count = 0;
+    this.mesh.frustumCulled = false;
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(max * 3), 3);
+    this.mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    scene.add(this.mesh);
+  }
+
+  burst(x: number, y: number, z: number, color: THREE.Color, n: number, speed = 9): void {
+    const col = this.mesh.instanceColor!.array as Float32Array;
+    for (let s = 0; s < n; s++) {
+      if (this.count >= this.max) break;
+      const i = this.count++;
+      const a = Math.random() * Math.PI * 2;
+      const elev = Math.random() * 0.9 + 0.15;
+      const sp = speed * (0.4 + Math.random() * 0.8);
+      this.px[i] = x;
+      this.py[i] = y;
+      this.pz[i] = z;
+      this.vx[i] = Math.cos(a) * sp * (1 - elev * 0.5);
+      this.vy[i] = elev * sp;
+      this.vz[i] = Math.sin(a) * sp * (1 - elev * 0.5);
+      this.maxLife[i] = this.life[i] = 0.35 + Math.random() * 0.45;
+      this.size[i] = 0.7 + Math.random() * 1.3;
+      col[i * 3] = color.r;
+      col[i * 3 + 1] = color.g;
+      col[i * 3 + 2] = color.b;
+    }
+    this.mesh.instanceColor!.needsUpdate = true;
+    this.mesh.count = this.count;
+  }
+
+  private remove(i: number): void {
+    const last = --this.count;
+    if (i !== last) {
+      this.px[i] = this.px[last];
+      this.py[i] = this.py[last];
+      this.pz[i] = this.pz[last];
+      this.vx[i] = this.vx[last];
+      this.vy[i] = this.vy[last];
+      this.vz[i] = this.vz[last];
+      this.life[i] = this.life[last];
+      this.maxLife[i] = this.maxLife[last];
+      this.size[i] = this.size[last];
+      const col = this.mesh.instanceColor!.array as Float32Array;
+      col.copyWithin(i * 3, last * 3, last * 3 + 3);
+      this.mesh.instanceColor!.needsUpdate = true;
+    }
+    this.mesh.count = this.count;
+  }
+
+  update(dt: number): void {
+    const m = this.mesh.instanceMatrix.array as Float32Array;
+    for (let i = this.count - 1; i >= 0; i--) {
+      this.life[i] -= dt;
+      if (this.life[i] <= 0 || this.py[i] < 0) { this.remove(i); continue; }
+      this.vy[i] -= 14 * dt;
+      this.px[i] += this.vx[i] * dt;
+      this.py[i] += this.vy[i] * dt;
+      this.pz[i] += this.vz[i] * dt;
+
+      const s = this.size[i] * (this.life[i] / this.maxLife[i]);
+      const o = i * 16;
+      m.fill(0, o, o + 16);
+      m[o] = m[o + 5] = m[o + 10] = s;
+      m[o + 12] = this.px[i];
+      m[o + 13] = this.py[i];
+      m[o + 14] = this.pz[i];
+      m[o + 15] = 1;
+    }
+    this.mesh.instanceMatrix.needsUpdate = true;
+  }
+}

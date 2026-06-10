@@ -1,0 +1,204 @@
+import * as THREE from 'three/webgpu';
+import type { SpatialGrid } from './spatial';
+
+export interface EnemyType {
+  hp: number;
+  speed: number;
+  radius: number;
+  dps: number;
+  xp: number;
+  scale: number;
+  color: THREE.Color;
+}
+
+export const ENEMY_TYPES: EnemyType[] = [
+  { hp: 3,   speed: 7,    radius: 0.5,  dps: 8,  xp: 1,  scale: 1.0,  color: new THREE.Color(0xff3355) },
+  { hp: 2,   speed: 11.5, radius: 0.38, dps: 6,  xp: 2,  scale: 0.76, color: new THREE.Color(0xff8822) },
+  { hp: 28,  speed: 3.6,  radius: 1.1,  dps: 18, xp: 8,  scale: 2.2,  color: new THREE.Color(0xaa33ff) },
+  { hp: 130, speed: 5,    radius: 1.6,  dps: 30, xp: 30, scale: 3.2,  color: new THREE.Color(0xffee33) },
+];
+
+const PLAYER_RADIUS = 0.8;
+
+/**
+ * All enemies live in packed structure-of-arrays buffers and render as a
+ * single InstancedMesh (one draw call for the entire horde). Dead enemies
+ * are swap-removed so the hot loops always run over a dense [0, count) range.
+ */
+export class Swarm {
+  readonly max: number;
+  count = 0;
+
+  readonly posX: Float32Array;
+  readonly posZ: Float32Array;
+  readonly hp: Float32Array;
+  readonly speed: Float32Array;
+  readonly radius: Float32Array;
+  readonly dps: Float32Array;
+  readonly xpv: Float32Array;
+  readonly seed: Float32Array;
+  readonly type: Uint8Array;
+
+  readonly mesh: THREE.InstancedMesh;
+
+  constructor(max: number, scene: THREE.Scene) {
+    this.max = max;
+    this.posX = new Float32Array(max);
+    this.posZ = new Float32Array(max);
+    this.hp = new Float32Array(max);
+    this.speed = new Float32Array(max);
+    this.radius = new Float32Array(max);
+    this.dps = new Float32Array(max);
+    this.xpv = new Float32Array(max);
+    this.seed = new Float32Array(max);
+    this.type = new Uint8Array(max);
+
+    const geo = new THREE.IcosahedronGeometry(0.5, 0);
+    const mat = new THREE.MeshStandardMaterial({ flatShading: true, roughness: 0.55, metalness: 0.15 });
+    this.mesh = new THREE.InstancedMesh(geo, mat, max);
+    this.mesh.count = 0;
+    this.mesh.frustumCulled = false;
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(max * 3), 3);
+    this.mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    scene.add(this.mesh);
+  }
+
+  spawn(typeIdx: number, x: number, z: number): void {
+    if (this.count >= this.max) return;
+    const i = this.count++;
+    const t = ENEMY_TYPES[typeIdx];
+    this.posX[i] = x;
+    this.posZ[i] = z;
+    this.hp[i] = t.hp;
+    this.speed[i] = t.speed * (0.9 + Math.random() * 0.2);
+    this.radius[i] = t.radius;
+    this.dps[i] = t.dps;
+    this.xpv[i] = t.xp;
+    this.seed[i] = Math.random() * Math.PI * 2;
+    this.type[i] = typeIdx;
+
+    const m = this.mesh.instanceMatrix.array as Float32Array;
+    const o = i * 16;
+    m.fill(0, o, o + 16);
+    m[o] = m[o + 5] = m[o + 10] = t.scale;
+    m[o + 12] = x;
+    m[o + 13] = t.radius;
+    m[o + 14] = z;
+    m[o + 15] = 1;
+
+    const col = this.mesh.instanceColor!.array as Float32Array;
+    const v = 0.85 + Math.random() * 0.3;
+    col[i * 3] = Math.min(1, t.color.r * v);
+    col[i * 3 + 1] = Math.min(1, t.color.g * v);
+    col[i * 3 + 2] = Math.min(1, t.color.b * v);
+    this.mesh.instanceColor!.needsUpdate = true;
+
+    this.mesh.count = this.count;
+  }
+
+  /** Swap-remove slot i; the (alive) last enemy moves into it. */
+  kill(i: number): void {
+    const last = --this.count;
+    if (i !== last) {
+      this.posX[i] = this.posX[last];
+      this.posZ[i] = this.posZ[last];
+      this.hp[i] = this.hp[last];
+      this.speed[i] = this.speed[last];
+      this.radius[i] = this.radius[last];
+      this.dps[i] = this.dps[last];
+      this.xpv[i] = this.xpv[last];
+      this.seed[i] = this.seed[last];
+      this.type[i] = this.type[last];
+      const m = this.mesh.instanceMatrix.array as Float32Array;
+      m.copyWithin(i * 16, last * 16, last * 16 + 16);
+      const col = this.mesh.instanceColor!.array as Float32Array;
+      col.copyWithin(i * 3, last * 3, last * 3 + 3);
+      this.mesh.instanceColor!.needsUpdate = true;
+    }
+    this.mesh.count = this.count;
+  }
+
+  /**
+   * Chase the player with local separation so the horde packs instead of
+   * stacking. Returns contact damage dealt to the player this frame.
+   * Iterating a swept dead-list from the top is safe with swap-remove:
+   * the element swapped in always comes from an index already processed.
+   */
+  update(dt: number, time: number, playerX: number, playerZ: number, grid: SpatialGrid): number {
+    const { posX, posZ, speed, radius, dps, seed, count } = this;
+    const m = this.mesh.instanceMatrix.array as Float32Array;
+    const { cellStart, indices, dim } = grid;
+    let playerDamage = 0;
+
+    for (let i = 0; i < count; i++) {
+      const x = posX[i], z = posZ[i], r = radius[i];
+      const dxp = playerX - x, dzp = playerZ - z;
+      const d = Math.sqrt(dxp * dxp + dzp * dzp) + 1e-6;
+
+      let vx = (dxp / d) * speed[i];
+      let vz = (dzp / d) * speed[i];
+
+      // Local separation: push away from a few overlapping neighbors.
+      // Capped per enemy so worst-case cost stays bounded in dense packs.
+      let sepX = 0, sepZ = 0, checked = 0;
+      const cx = grid.cellX(x), cz = grid.cellZ(z);
+      outer:
+      for (let gz = cz > 0 ? cz - 1 : 0; gz <= (cz < dim - 1 ? cz + 1 : cz); gz++) {
+        for (let gx = cx > 0 ? cx - 1 : 0; gx <= (cx < dim - 1 ? cx + 1 : cx); gx++) {
+          const c = gz * dim + gx;
+          for (let k = cellStart[c]; k < cellStart[c + 1]; k++) {
+            const j = indices[k];
+            if (j === i || j >= count) continue;
+            const ddx = x - posX[j], ddz = z - posZ[j];
+            const minD = r + radius[j];
+            const d2 = ddx * ddx + ddz * ddz;
+            if (d2 < minD * minD && d2 > 1e-8) {
+              const dn = Math.sqrt(d2);
+              const push = (minD - dn) / minD;
+              sepX += (ddx / dn) * push;
+              sepZ += (ddz / dn) * push;
+            }
+            if (++checked >= 14) break outer;
+          }
+        }
+      }
+
+      const nx = x + (vx + sepX * 10) * dt;
+      const nz = z + (vz + sepZ * 10) * dt;
+      posX[i] = nx;
+      posZ[i] = nz;
+
+      if (d < r + PLAYER_RADIUS) playerDamage += dps[i] * dt;
+
+      const o = i * 16;
+      m[o + 12] = nx;
+      m[o + 13] = r * (1 + 0.3 * Math.abs(Math.sin(time * 4 + seed[i])));
+      m[o + 14] = nz;
+    }
+
+    this.mesh.instanceMatrix.needsUpdate = true;
+    return playerDamage;
+  }
+
+  /** Compact out hp<=0 enemies; calls back with death position/loot info. */
+  sweepDead(onDeath: (x: number, z: number, xp: number, type: number) => void): void {
+    for (let i = this.count - 1; i >= 0; i--) {
+      if (this.hp[i] <= 0) {
+        onDeath(this.posX[i], this.posZ[i], this.xpv[i], this.type[i]);
+        this.kill(i);
+      }
+    }
+  }
+
+  /** Linear scan for nearest enemy — runs once per volley, not per frame. */
+  nearest(x: number, z: number): number {
+    let best = -1, bestD2 = Infinity;
+    for (let i = 0; i < this.count; i++) {
+      const dx = this.posX[i] - x, dz = this.posZ[i] - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < bestD2) { bestD2 = d2; best = i; }
+    }
+    return best;
+  }
+}
