@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { pass } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
-import { createState, grantXp, rollUpgrades, UPGRADES } from './state';
+import { createState, grantXp, rollUpgrades, registerKill, tickCombo, UPGRADES } from './state';
 import { getMove } from './input';
 import { SpatialGrid } from './spatial';
 import { Swarm, ENEMY_TYPES, BOSS_TYPE } from './swarm';
@@ -299,6 +299,8 @@ async function start() {
   // --- firing ---
   let fireAcc = 0;
   let facing = 0;
+  let muzzle = 0; // muzzle-flash glow pulse, decays each frame
+  const baseGlow = glow.intensity;
 
   function fireVolley(): void {
     const px = player.position.x, pz = player.position.z;
@@ -317,6 +319,7 @@ async function start() {
       const a = base + k * spread;
       bullets.fire(px, pz, Math.sin(a), Math.cos(a), state.bulletSpeed, state.dmg, state.pierce);
     }
+    muzzle = 1;
     sfx.sfxFire(); // throttled internally
   }
 
@@ -382,6 +385,13 @@ async function start() {
 
   function update(dt: number): void {
     state.time += dt;
+    tickCombo(state, dt);
+
+    // muzzle flash: brief glow brighten on fire, decays fast
+    if (muzzle > 0.001) {
+      muzzle *= Math.pow(0.0005, dt);
+      glow.intensity = baseGlow * (1 + muzzle * 0.8);
+    }
 
     const mv = getMove();
     player.position.x += mv.x * state.moveSpeed * dt;
@@ -435,6 +445,7 @@ async function start() {
 
     swarm.sweepDead((x, z, xp, type) => {
       state.kills++;
+      registerKill(state, type); // combo + score
       const t = ENEMY_TYPES[type];
       if (type === BOSS_TYPE) {
         activeBosses--;

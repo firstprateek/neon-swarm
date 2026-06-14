@@ -18,6 +18,10 @@ export interface GameState {
   // secondary weapons — level 0 means not yet acquired
   orbitalLevel: number;
   teslaLevel: number;
+  // scoring (also the future global-leaderboard metric)
+  score: number;
+  combo: number;
+  comboTimer: number;
 }
 
 export function createState(): GameState {
@@ -40,7 +44,39 @@ export function createState(): GameState {
     bulletSpeed: 36,
     orbitalLevel: 0,
     teslaLevel: 0,
+    score: 0,
+    combo: 0,
+    comboTimer: 0,
   };
+}
+
+/** base score per enemy type index (grunt, runner, tank, elite, boss) */
+export const SCORE_BY_TYPE = [1, 1, 5, 20, 250];
+const COMBO_WINDOW = 2.5; // seconds before the combo resets
+const COMBO_CAP = 40;     // combo count beyond which the multiplier stops growing
+
+/** current score multiplier from the combo meter (1.0 .. 5.0) */
+export function comboMultiplier(s: GameState): number {
+  return 1 + Math.min(s.combo, COMBO_CAP) * 0.1;
+}
+
+/** register a kill: extend the combo and add combo-scaled score */
+export function registerKill(s: GameState, type: number): void {
+  s.combo++;
+  s.comboTimer = COMBO_WINDOW;
+  const base = SCORE_BY_TYPE[type] ?? 1;
+  s.score += Math.round(base * comboMultiplier(s));
+}
+
+/** decay the combo window; reset the combo when it lapses */
+export function tickCombo(s: GameState, dt: number): void {
+  if (s.comboTimer > 0) {
+    s.comboTimer -= dt;
+    if (s.comboTimer <= 0) {
+      s.comboTimer = 0;
+      s.combo = 0;
+    }
+  }
 }
 
 export function xpForLevel(level: number): number {

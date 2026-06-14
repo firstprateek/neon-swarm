@@ -5,13 +5,13 @@
  */
 import * as THREE from 'three/webgpu';
 import { SpatialGrid } from './spatial';
-import { Swarm, ENEMY_TYPES, BOSS_TYPE } from './swarm';
+import { Swarm, ENEMY_TYPES, BOSS_TYPE, HIT_FLASH } from './swarm';
 import { Bullets, Gems, Particles } from './combat';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize } from './director';
 import { createQuality, governQuality, MAX_TIER } from './perf';
 import * as sfx from './sfx';
-import { createState, grantXp, xpForLevel, rollUpgrades, UPGRADES } from './state';
+import { createState, grantXp, xpForLevel, rollUpgrades, registerKill, tickCombo, comboMultiplier, SCORE_BY_TYPE, UPGRADES } from './state';
 import { getMove } from './input';
 import * as hud from './hud';
 
@@ -305,6 +305,48 @@ function run(): void {
     check('director: early game is grunts only', rollEnemyType(10, 0.01) === 0 && rollEnemyType(10, 0.99) === 0);
     check('director: tanks/elites gated to later', rollEnemyType(30, 0.05) <= 1 && rollEnemyType(300, 0.05) === 3,
       `${rollEnemyType(30, 0.05)},${rollEnemyType(300, 0.05)}`);
+  }
+
+  // ---------- Scoring / combo ----------
+  {
+    const s = createState();
+    check('score: starts at zero', s.score === 0 && s.combo === 0);
+    registerKill(s, 0); // grunt, combo now 1, mult 1.1
+    check('score: first kill scores base*mult', s.score === Math.round(SCORE_BY_TYPE[0] * 1.1), `score=${s.score}`);
+    check('score: kill builds combo', s.combo === 1 && s.comboTimer > 0);
+    for (let i = 0; i < 9; i++) registerKill(s, 0); // combo now 10 -> mult 2.0
+    check('score: combo multiplier grows', Math.abs(comboMultiplier(s) - 2.0) < 1e-9, String(comboMultiplier(s)));
+    const before = s.score;
+    registerKill(s, 4); // boss at combo 11 -> mult 2.1
+    check('score: boss kill is worth a lot', s.score - before === Math.round(SCORE_BY_TYPE[4] * 2.1), `${s.score - before}`);
+    // multiplier caps
+    for (let i = 0; i < 60; i++) registerKill(s, 0);
+    check('score: multiplier caps at 5.0', comboMultiplier(s) === 5.0, String(comboMultiplier(s)));
+    // combo decays and resets
+    tickCombo(s, 1.0);
+    check('score: combo persists within the window', s.combo > 0);
+    tickCombo(s, 5.0);
+    check('score: combo resets after the window lapses', s.combo === 0 && s.comboTimer === 0);
+  }
+
+  // ---------- Hit-flash ----------
+  {
+    const scene = new THREE.Scene();
+    const sw = new Swarm(4, scene);
+    sw.spawn(0, 5, 0);
+    const col = sw.mesh.instanceColor!.array as Float32Array;
+    // grunts are red (0xff3355): R is saturated (~1), so test the green channel,
+    // which is dim at base and visibly brightens toward white during a flash
+    const baseG = sw.baseCol[1];
+    check('flash: base color captured at spawn', baseG === col[1] && baseG < 0.5, `baseG=${baseG}`);
+    const g = new SpatialGrid(2.5, 16, 4);
+    sw.flash[0] = HIT_FLASH; // simulate a hit
+    g.build(sw.posX, sw.posZ, sw.count, 0, 0);
+    sw.update(1 / 600, 0, 0, 0, g); // tiny dt: still mid-flash
+    check('flash: enemy brightens toward white while flashing', col[1] > baseG + 0.2, `colG=${col[1].toFixed(2)} baseG=${baseG.toFixed(2)}`);
+    // run enough frames to finish the flash
+    for (let t = 0; t < 20; t++) sw.update(1 / 60, 0, 0, 0, g);
+    check('flash: color restores to base after flash ends', Math.abs(col[1] - baseG) < 1e-4, `colG=${col[1]} baseG=${baseG}`);
   }
 
   // ---------- Perf governor ----------

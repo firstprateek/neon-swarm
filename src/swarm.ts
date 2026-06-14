@@ -25,6 +25,9 @@ export const BOSS_TYPE = 4;
 const PLAYER_RADIUS = 0.8;
 const BOB_BUCKETS = 64;
 
+/** seconds an enemy flashes white after being hit */
+export const HIT_FLASH = 0.09;
+
 /**
  * All enemies live in packed structure-of-arrays buffers and render as a
  * single InstancedMesh (one draw call for the entire horde). Dead enemies
@@ -53,6 +56,8 @@ export class Swarm {
   readonly hitBy: Float64Array;
   readonly bob: Uint8Array;
   readonly type: Uint8Array;
+  readonly flash: Float32Array;   // hit-flash timer (seconds remaining)
+  readonly baseCol: Float32Array; // per-instance base color, to restore after a flash
 
   readonly mesh: THREE.InstancedMesh;
   private readonly pulse = new Float32Array(BOB_BUCKETS);
@@ -70,6 +75,8 @@ export class Swarm {
     this.hitBy = new Float64Array(max);
     this.bob = new Uint8Array(max);
     this.type = new Uint8Array(max);
+    this.flash = new Float32Array(max);
+    this.baseCol = new Float32Array(max * 3);
 
     const geo = new THREE.IcosahedronGeometry(0.5, 0);
     // Lambert (diffuse-only) instead of Standard (full PBR): the swarm is the
@@ -104,6 +111,7 @@ export class Swarm {
     this.hitBy[i] = 0; // slot may be recycled — forget old bullet ids
     this.bob[i] = (Math.random() * BOB_BUCKETS) | 0;
     this.type[i] = typeIdx;
+    this.flash[i] = 0;
 
     const m = this.mesh.instanceMatrix.array as Float32Array;
     const o = i * 16;
@@ -116,9 +124,10 @@ export class Swarm {
 
     const col = this.mesh.instanceColor!.array as Float32Array;
     const v = 0.85 + Math.random() * 0.3;
-    col[i * 3] = Math.min(1, t.color.r * v);
-    col[i * 3 + 1] = Math.min(1, t.color.g * v);
-    col[i * 3 + 2] = Math.min(1, t.color.b * v);
+    const cr = Math.min(1, t.color.r * v), cg = Math.min(1, t.color.g * v), cb = Math.min(1, t.color.b * v);
+    col[i * 3] = this.baseCol[i * 3] = cr;
+    col[i * 3 + 1] = this.baseCol[i * 3 + 1] = cg;
+    col[i * 3 + 2] = this.baseCol[i * 3 + 2] = cb;
     this.mesh.instanceColor!.addUpdateRange(0, this.count * 3);
     this.mesh.instanceColor!.needsUpdate = true;
 
@@ -140,6 +149,8 @@ export class Swarm {
       this.hitBy[i] = this.hitBy[last];
       this.bob[i] = this.bob[last];
       this.type[i] = this.type[last];
+      this.flash[i] = this.flash[last];
+      this.baseCol.copyWithin(i * 3, last * 3, last * 3 + 3);
       const m = this.mesh.instanceMatrix.array as Float32Array;
       m.copyWithin(i * 16, last * 16, last * 16 + 16);
       const col = this.mesh.instanceColor!.array as Float32Array;
@@ -155,10 +166,12 @@ export class Swarm {
    * stacking. Returns contact damage dealt to the player this frame.
    */
   update(dt: number, time: number, playerX: number, playerZ: number, grid: SpatialGrid): number {
-    const { posX, posZ, speed, radius, dps, bob, count, pulse } = this;
+    const { posX, posZ, speed, radius, dps, bob, count, pulse, flash, baseCol } = this;
     const m = this.mesh.instanceMatrix.array as Float32Array;
+    const col = this.mesh.instanceColor!.array as Float32Array;
     const { cellStart, indices, dim } = grid;
     let playerDamage = 0;
+    let colorDirty = false;
 
     // 64-entry pulse LUT replaces 20k Math.sin calls for the cosmetic bob
     for (let b = 0; b < BOB_BUCKETS; b++) {
@@ -209,6 +222,17 @@ export class Swarm {
       m[o + 12] = nx;
       m[o + 13] = r * pulse[bob[i]];
       m[o + 14] = nz;
+
+      // hit-flash: blend toward white while active, snap back to base when done
+      if (flash[i] > 0) {
+        flash[i] -= dt;
+        const tf = flash[i] > 0 ? flash[i] / HIT_FLASH : 0;
+        const o3 = i * 3;
+        col[o3] = baseCol[o3] + (1 - baseCol[o3]) * tf;
+        col[o3 + 1] = baseCol[o3 + 1] + (1 - baseCol[o3 + 1]) * tf;
+        col[o3 + 2] = baseCol[o3 + 2] + (1 - baseCol[o3 + 2]) * tf;
+        colorDirty = true;
+      }
     }
 
     if (count > 0) {
@@ -216,6 +240,12 @@ export class Swarm {
       im.clearUpdateRanges();
       im.addUpdateRange(0, count * 16); // upload only the live slice
       im.needsUpdate = true;
+      if (colorDirty) {
+        const ic = this.mesh.instanceColor!;
+        ic.clearUpdateRanges();
+        ic.addUpdateRange(0, count * 3);
+        ic.needsUpdate = true;
+      }
     }
     return playerDamage;
   }

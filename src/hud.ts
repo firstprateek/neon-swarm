@@ -22,6 +22,8 @@ const goStats = el('go-stats');
 const bossWrap = el('boss-wrap');
 const bossFill = el('boss-fill');
 const bossWarn = el('boss-warn');
+const scoreTxt = el('score');
+const comboTxt = el('combo');
 
 let vignetteOpacity = 0;
 let bossWarnTimer = 0;
@@ -29,7 +31,7 @@ let lastBossQ = -1;
 
 // dirty-check cache: the HUD runs every frame, but the DOM (and layout)
 // should only be touched when a displayed value actually changes
-const last = { hpQ: -1, hpTxt: '', xpQ: -1, level: -1, secs: -1, kills: -1, enemies: -1 };
+const last = { hpQ: -1, hpTxt: '', xpQ: -1, level: -1, secs: -1, kills: -1, enemies: -1, score: -1, comboShown: false, mult: '' };
 
 export function update(state: GameState, enemyCount: number): void {
   const hpQ = Math.round(Math.max(0, Math.min(1, state.hp / state.maxHp)) * 400);
@@ -63,6 +65,29 @@ export function update(state: GameState, enemyCount: number): void {
   if (enemyCount !== last.enemies) {
     last.enemies = enemyCount;
     enemiesTxt.textContent = enemyCount.toLocaleString();
+  }
+  if (state.score !== last.score) {
+    last.score = state.score;
+    scoreTxt.textContent = state.score.toLocaleString();
+  }
+  // combo multiplier: show + pulse while a combo is alive, hide when it lapses
+  const comboLive = state.comboTimer > 0 && state.combo >= 2;
+  if (comboLive) {
+    const mult = '×' + (1 + Math.min(state.combo, 40) * 0.1).toFixed(1);
+    if (mult !== last.mult) {
+      last.mult = mult;
+      comboTxt.textContent = mult;
+      // retrigger the pulse animation on each combo increment
+      comboTxt.classList.remove('pulse');
+      void comboTxt.offsetWidth;
+      comboTxt.classList.add('pulse');
+    }
+    if (!last.comboShown) { last.comboShown = true; comboTxt.classList.remove('hidden'); }
+  } else if (last.comboShown) {
+    last.comboShown = false;
+    last.mult = '';
+    comboTxt.classList.add('hidden');
+    comboTxt.classList.remove('pulse');
   }
 }
 
@@ -162,6 +187,7 @@ export function showGameOver(state: GameState): void {
   const mins = (state.time / 60) | 0;
   const secs = (state.time % 60) | 0;
   goStats.innerHTML =
+    `SCORE <b>${state.score.toLocaleString()}</b><br/>` +
     `SURVIVED <b>${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}</b><br/>` +
     `KILLS <b>${state.kills.toLocaleString()}</b><br/>` +
     `LEVEL <b>${state.level}</b>`;

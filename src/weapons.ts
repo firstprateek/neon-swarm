@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import type { SpatialGrid } from './spatial';
-import type { Swarm } from './swarm';
+import { HIT_FLASH, type Swarm } from './swarm';
 import type { Particles } from './combat';
 
 /**
@@ -71,6 +71,7 @@ export class Orbitals {
             const minD = swarm.radius[j] + r;
             if (ddx * ddx + ddz * ddz < minD * minD) {
               swarm.hp[j] -= dps * dt;
+              swarm.flash[j] = HIT_FLASH;
               // light knockback outward from the player
               const pdx = swarm.posX[j] - px, pdz = swarm.posZ[j] - pz;
               const pd = Math.sqrt(pdx * pdx + pdz * pdz) + 1e-6;
@@ -179,6 +180,7 @@ export class Tesla {
     for (let c = 0; c < chains && cur >= 0; c++) {
       const ex = swarm.posX[cur], ez = swarm.posZ[cur];
       swarm.hp[cur] -= dmg;
+      swarm.flash[cur] = HIT_FLASH;
       this.hitScratch.push(cur);
       this.addSegment(fromX, fromZ, ex, ez);
       particles.burst(ex, swarm.radius[cur] + 0.2, ez, new THREE.Color(0xddffff), 5, 7);

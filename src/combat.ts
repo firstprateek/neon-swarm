@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import type { SpatialGrid } from './spatial';
-import type { Swarm } from './swarm';
+import { HIT_FLASH, type Swarm } from './swarm';
 
 let nextBulletId = 1;
 
@@ -121,6 +121,7 @@ export class Bullets {
             const minD = swarm.radius[j] + 0.25;
             if (qx * qx + qz * qz < minD * minD) {
               swarm.hp[j] -= dmg[i];
+              swarm.flash[j] = HIT_FLASH;
               swarm.hitBy[j] = ids[i];
               // fixed knockback impulse, independent of frame rate
               const kb = 0.4 / Math.sqrt(vx[i] * vx[i] + vz[i] * vz[i]);
