@@ -72,7 +72,11 @@ export class Swarm {
     this.type = new Uint8Array(max);
 
     const geo = new THREE.IcosahedronGeometry(0.5, 0);
-    const mat = new THREE.MeshStandardMaterial({ flatShading: true, roughness: 0.55, metalness: 0.15 });
+    // Lambert (diffuse-only) instead of Standard (full PBR): the swarm is the
+    // fragment-overdraw bottleneck when the horde fills the screen — hundreds of
+    // instances overlap per pixel, each running the fragment shader. These tiny
+    // flat-shaded blobs don't need PBR; Lambert shades far cheaper per fragment.
+    const mat = new THREE.MeshLambertMaterial({ flatShading: true });
     this.mesh = new THREE.InstancedMesh(geo, mat, max);
     this.mesh.frustumCulled = false;
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
