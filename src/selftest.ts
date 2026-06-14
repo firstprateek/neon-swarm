@@ -10,6 +10,7 @@ import { Bullets, Gems, Particles } from './combat';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize } from './director';
 import { createQuality, governQuality, MAX_TIER } from './perf';
+import * as sfx from './sfx';
 import { createState, grantXp, xpForLevel, rollUpgrades, UPGRADES } from './state';
 import { getMove } from './input';
 import * as hud from './hud';
@@ -337,6 +338,25 @@ function run(): void {
     const q4 = createQuality(target);
     for (let i = 0; i < 400; i++) governQuality(q4, 2, target, 1 / 60);
     check('perf: clamps at best tier (no underflow)', q4.tier === 0);
+  }
+
+  // ---------- Audio (sfx) ----------
+  {
+    let threw = false;
+    try {
+      sfx.initAudio();
+      sfx.sfxFire(); sfx.sfxKill(); sfx.sfxPickup(); sfx.sfxLevelUp();
+      sfx.sfxHurt(); sfx.sfxBossWarn(); sfx.sfxBossDie(); sfx.sfxDeath();
+    } catch { threw = true; }
+    check('sfx: init + every sound plays without throwing', !threw);
+    const before = sfx.isMuted();
+    check('sfx: toggleMute flips state', sfx.toggleMute() === !before);
+    sfx.setMuted(false);
+    check('sfx: setMuted(false) leaves it unmuted', sfx.isMuted() === false);
+    // throttled sounds must still be safe to spam
+    let spamThrew = false;
+    try { for (let i = 0; i < 50; i++) { sfx.sfxFire(); sfx.sfxKill(); } } catch { spamThrew = true; }
+    check('sfx: spamming throttled sounds is safe', !spamThrew);
   }
 
   // ---------- Boss enemy ----------

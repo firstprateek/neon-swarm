@@ -9,6 +9,7 @@ import { Bullets, Gems, Particles } from './combat';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize, BOSS_INTERVAL } from './director';
 import { createQuality, governQuality, QUALITY_TIERS, MAX_TIER } from './perf';
+import * as sfx from './sfx';
 import * as hud from './hud';
 
 const MAX_ENEMIES = 20000;
@@ -203,7 +204,14 @@ async function start() {
   let started = false;
   let over = false;
   let leveling = false;
-  hud.showStart(() => { started = true; });
+  let shake = 0; // screen-shake magnitude, decays each frame
+  const addShake = (a: number) => { shake = Math.min(2.2, shake + a); };
+
+  if (params.has('mute')) sfx.setMuted(true);
+  hud.showStart(() => { started = true; sfx.initAudio(); });
+  window.addEventListener('keydown', e => {
+    if (e.code === 'KeyM') sfx.toggleMute();
+  });
 
   function openLevelUp(): void {
     const choices = rollUpgrades(3);
@@ -214,6 +222,7 @@ async function start() {
       return;
     }
     leveling = true;
+    sfx.sfxLevelUp();
     hud.showLevelUp(choices, u => {
       u.count++;
       u.apply(state);
@@ -238,6 +247,8 @@ async function start() {
     swarm.spawn(BOSS_TYPE, player.position.x + Math.cos(a) * rad, player.position.z + Math.sin(a) * rad, bossHp(bossesSpawned));
     activeBosses++;
     hud.bossWarning();
+    sfx.sfxBossWarn();
+    addShake(0.7);
   }
 
   function director(dt: number): void {
@@ -306,12 +317,15 @@ async function start() {
       const a = base + k * spread;
       bullets.fire(px, pz, Math.sin(a), Math.cos(a), state.bulletSpeed, state.dmg, state.pierce);
     }
+    sfx.sfxFire(); // throttled internally
   }
 
   function gameOver(): void {
     over = true;
     particles.burst(player.position.x, 1, player.position.z, new THREE.Color(0x44ffee), 160, 16);
     player.visible = false;
+    addShake(2.0);
+    sfx.sfxDeath();
     hud.hideBoss();
     hud.showGameOver(state);
   }
@@ -339,6 +353,9 @@ async function start() {
     bosses: () => ({ active: activeBosses, spawned: bossesSpawned }),
     flags: () => ({ started, over, leveling }),
     quality: () => ({ tier: quality.tier, label: QUALITY_TIERS[quality.tier].label, emaMs: +quality.emaMs.toFixed(2), bloom: bloomEnabled, pixelRatio: renderer.getPixelRatio() }),
+    shake: () => shake,
+    addShake,
+    audio: () => ({ ready: sfx.audioReady(), muted: sfx.isMuted() }),
     // test hook: feed a synthetic frame time to the governor and apply any tier change
     feedFrame: (frameMs: number) => {
       if (governQuality(quality, frameMs, targetFrameMs, 1 / 60)) applyQuality();
@@ -381,6 +398,12 @@ async function start() {
 
     camera.position.x += (player.position.x - camera.position.x) * Math.min(1, dt * 5);
     camera.position.z += (player.position.z + 15 - camera.position.z) * Math.min(1, dt * 5);
+    // transient, zero-mean screen-shake offset (re-centered by the lerp next frame)
+    if (shake > 0.001) {
+      camera.position.x += (Math.random() * 2 - 1) * shake;
+      camera.position.z += (Math.random() * 2 - 1) * shake;
+      shake *= Math.pow(0.012, dt); // fast decay
+    }
     camera.lookAt(player.position.x, 0, player.position.z);
 
     grid.build(swarm.posX, swarm.posZ, swarm.count, player.position.x, player.position.z);
@@ -388,6 +411,8 @@ async function start() {
     if (damage > 0) {
       state.hp -= damage;
       hud.damageFlash();
+      addShake(Math.min(0.6, damage * 0.04));
+      sfx.sfxHurt();
     }
     state.hp = Math.min(state.maxHp, state.hp + state.regen * dt);
 
@@ -418,13 +443,16 @@ async function start() {
           gems.spawn(x + (Math.random() - 0.5) * 3, z + (Math.random() - 0.5) * 3, Math.ceil(xp / 6));
         }
         particles.burst(x, t.radius, z, t.color, 90, 18);
+        addShake(1.4);
+        sfx.sfxBossDie();
       } else {
         gems.spawn(x, z, xp);
         particles.burst(x, t.radius, z, t.color, type >= 2 ? 26 : 10);
+        sfx.sfxKill(); // throttled internally
       }
     });
 
-    gems.update(dt, state.time, player.position.x, player.position.z, state.magnet, v => grantXp(state, v));
+    gems.update(dt, state.time, player.position.x, player.position.z, state.magnet, v => { grantXp(state, v); sfx.sfxPickup(); });
     particles.update(dt);
 
     if (state.hp <= 0) {
