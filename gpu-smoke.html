@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>NEON SWARM — GPU compute smoke test</title>
+  <style>
+    body { background: #05060a; color: #cfeef5; font-family: ui-monospace, Menlo, monospace; padding: 24px; }
+    .pass { color: #44ff99; }
+    .fail { color: #ff3355; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>GPU compute smoke test</h1>
+  <div id="out">running…</div>
+  <div id="app" style="position:fixed;width:64px;height:64px;left:-100px;top:-100px"></div>
+  <script type="module" src="/src/gpu-smoke.ts"></script>
+</body>
+</html>
