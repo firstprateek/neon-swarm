@@ -5,9 +5,10 @@
  */
 import * as THREE from 'three/webgpu';
 import { SpatialGrid } from './spatial';
-import { Swarm, ENEMY_TYPES } from './swarm';
+import { Swarm, ENEMY_TYPES, BOSS_TYPE } from './swarm';
 import { Bullets, Gems, Particles } from './combat';
 import { Orbitals, Tesla } from './weapons';
+import { spawnRate, rollEnemyType, bossHp, hordeSize } from './director';
 import { createState, grantXp, xpForLevel, rollUpgrades, UPGRADES } from './state';
 import { getMove } from './input';
 import * as hud from './hud';
@@ -284,6 +285,40 @@ function run(): void {
     check('tesla: bolt segments fade out', tes.mesh.count === 0 && tes.mesh.visible === false, String(tes.mesh.count));
   }
 
+  // ---------- Director / difficulty ----------
+  {
+    check('director: spawn rate increases with time', spawnRate(120) > spawnRate(0), `${spawnRate(0)} -> ${spawnRate(120)}`);
+    check('director: spawn rate soft-caps', spawnRate(100000) === 48, String(spawnRate(100000)));
+    check('director: boss HP scales per boss', bossHp(2) > bossHp(1) && bossHp(3) > bossHp(2), `${bossHp(1)},${bossHp(2)},${bossHp(3)}`);
+    check('director: horde size grows and clamps', hordeSize(0) >= 80 && hordeSize(100000) === 500, `${hordeSize(0)},${hordeSize(100000)}`);
+
+    // rollEnemyType: never the boss, always a valid index, gated by time
+    let everBoss = false, outOfRange = false;
+    for (let i = 0; i < 500; i++) {
+      const ty = rollEnemyType(Math.random() * 400, Math.random());
+      if (ty === BOSS_TYPE) everBoss = true;
+      if (ty < 0 || ty >= BOSS_TYPE) outOfRange = true;
+    }
+    check('director: ambient rolls never spawn a boss', !everBoss && !outOfRange);
+    check('director: early game is grunts only', rollEnemyType(10, 0.01) === 0 && rollEnemyType(10, 0.99) === 0);
+    check('director: tanks/elites gated to later', rollEnemyType(30, 0.05) <= 1 && rollEnemyType(300, 0.05) === 3,
+      `${rollEnemyType(30, 0.05)},${rollEnemyType(300, 0.05)}`);
+  }
+
+  // ---------- Boss enemy ----------
+  {
+    const scene = new THREE.Scene();
+    const sw = new Swarm(8, scene);
+    const bhp = bossHp(1);
+    sw.spawn(BOSS_TYPE, 5, 5, bhp);
+    check('boss: spawn with HP override sets hp and maxHp', sw.hp[0] === bhp && sw.maxHp[0] === bhp, `${sw.hp[0]}/${sw.maxHp[0]}`);
+    check('boss: is much tougher than an elite', bhp > ENEMY_TYPES[3].hp * 5, String(bhp));
+    // maxHp survives swap-remove compaction
+    sw.spawn(0, 0, 0);
+    sw.kill(0); // grunt swaps into boss slot... wait boss is slot 0; kill(0) removes boss, grunt(slot1) moves to 0
+    check('boss: maxHp tracked through compaction', sw.maxHp[0] === ENEMY_TYPES[0].hp, String(sw.maxHp[0]));
+  }
+
   // ---------- State / upgrades ----------
   {
     const s = createState();
@@ -365,6 +400,18 @@ function run(): void {
     hud.showGameOver(s);
     check('hud: game over shows stats', (document.getElementById('go-stats')!.innerHTML || '').includes('KILLS'));
     document.getElementById('gameover-overlay')!.classList.add('hidden');
+
+    // boss bar + warning
+    hud.setBoss(750, 1500);
+    check('hud: boss bar shows at half on setBoss', !document.getElementById('boss-wrap')!.classList.contains('hidden') &&
+      (document.getElementById('boss-fill') as HTMLElement).style.transform === 'scaleX(0.5)',
+      (document.getElementById('boss-fill') as HTMLElement).style.transform);
+    hud.hideBoss();
+    check('hud: hideBoss hides the bar', document.getElementById('boss-wrap')!.classList.contains('hidden'));
+    hud.bossWarning();
+    check('hud: boss warning appears', !document.getElementById('boss-warn')!.classList.contains('hidden'));
+    hud.tick(3); // longer than the 2.4s warning
+    check('hud: boss warning auto-hides after timeout', document.getElementById('boss-warn')!.classList.contains('hidden'));
   }
 }
 

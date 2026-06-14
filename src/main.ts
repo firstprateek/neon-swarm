@@ -4,9 +4,10 @@ import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { createState, grantXp, rollUpgrades, UPGRADES } from './state';
 import { getMove } from './input';
 import { SpatialGrid } from './spatial';
-import { Swarm, ENEMY_TYPES } from './swarm';
+import { Swarm, ENEMY_TYPES, BOSS_TYPE } from './swarm';
 import { Bullets, Gems, Particles } from './combat';
 import { Orbitals, Tesla } from './weapons';
+import { spawnRate, rollEnemyType, bossHp, hordeSize, BOSS_INTERVAL } from './director';
 import * as hud from './hud';
 
 const MAX_ENEMIES = 20000;
@@ -208,35 +209,62 @@ async function start() {
   // --- spawn director ---
   let spawnAcc = 0;
   let hordeTimer = 40;
+  let bossTimer = BOSS_INTERVAL;
+  let bossesSpawned = 0;
+  let activeBosses = 0;
 
-  function pickType(t: number): number {
-    const r = Math.random();
-    if (t > 240 && r < 0.06) return 3;
-    if (t > 100 && r < 0.18) return 2;
-    if (t > 35 && r < 0.4) return 1;
-    return 0;
+  function spawnBoss(): void {
+    bossesSpawned++;
+    const a = Math.random() * Math.PI * 2;
+    const rad = 50;
+    swarm.spawn(BOSS_TYPE, player.position.x + Math.cos(a) * rad, player.position.z + Math.sin(a) * rad, bossHp(bossesSpawned));
+    activeBosses++;
+    hud.bossWarning();
   }
 
   function director(dt: number): void {
-    if (swarm.count > MAX_ENEMIES - 64) return;
     const t = state.time;
-    spawnAcc += dt * (2 + t * 0.085);
+    // boss timer runs even at the pool cap so bosses are never starved out
+    bossTimer -= dt;
+    if (bossTimer <= 0) {
+      bossTimer = BOSS_INTERVAL;
+      if (swarm.count < MAX_ENEMIES) spawnBoss();
+    }
+
+    if (swarm.count > MAX_ENEMIES - 64) return;
+
+    spawnAcc += dt * spawnRate(t);
     while (spawnAcc >= 1) {
       spawnAcc -= 1;
       const a = Math.random() * Math.PI * 2;
       const rad = 52 + Math.random() * 18;
-      swarm.spawn(pickType(t), player.position.x + Math.cos(a) * rad, player.position.z + Math.sin(a) * rad);
+      swarm.spawn(rollEnemyType(t), player.position.x + Math.cos(a) * rad, player.position.z + Math.sin(a) * rad);
     }
+
     hordeTimer -= dt;
     if (hordeTimer <= 0) {
       hordeTimer = 40;
-      const n = Math.min(500, 80 + t * 1.2) | 0;
+      const n = hordeSize(t);
       for (let i = 0; i < n; i++) {
         const a = (i / n) * Math.PI * 2;
         const rad = 58 + Math.random() * 8;
-        swarm.spawn(pickType(t + 30), player.position.x + Math.cos(a) * rad, player.position.z + Math.sin(a) * rad);
+        swarm.spawn(rollEnemyType(t + 30), player.position.x + Math.cos(a) * rad, player.position.z + Math.sin(a) * rad);
       }
     }
+  }
+
+  /** Track the toughest living boss for the HUD bar (scan only when bosses exist). */
+  function updateBossBar(): void {
+    if (activeBosses <= 0) { hud.hideBoss(); return; }
+    let bestHp = -1, bestMax = 1;
+    for (let i = 0; i < swarm.count; i++) {
+      if (swarm.type[i] === BOSS_TYPE && swarm.hp[i] > bestHp) {
+        bestHp = swarm.hp[i];
+        bestMax = swarm.maxHp[i];
+      }
+    }
+    if (bestHp >= 0) hud.setBoss(bestHp, bestMax);
+    else hud.hideBoss();
   }
 
   // --- firing ---
@@ -266,6 +294,7 @@ async function start() {
     over = true;
     particles.burst(player.position.x, 1, player.position.z, new THREE.Color(0x44ffee), 160, 16);
     player.visible = false;
+    hud.hideBoss();
     hud.showGameOver(state);
   }
 
@@ -276,7 +305,9 @@ async function start() {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const rad = 15 + Math.random() * 45;
-      swarm.spawn((Math.random() * ENEMY_TYPES.length) | 0, player.position.x + Math.cos(a) * rad, player.position.z + Math.sin(a) * rad);
+      // ambient types only (0..BOSS_TYPE-1) — bosses come from spawnBoss so
+      // the activeBosses counter and boss bar stay consistent
+      swarm.spawn((Math.random() * BOSS_TYPE) | 0, player.position.x + Math.cos(a) * rad, player.position.z + Math.sin(a) * rad);
     }
     return swarm.count;
   };
@@ -286,6 +317,8 @@ async function start() {
   // stay deterministic even where rAF is throttled (hidden/headless tabs)
   (window as unknown as Record<string, unknown>).__dbg = {
     state, swarm, bullets, gems, particles, orbitals, tesla, player, camera, upgrades: UPGRADES,
+    spawnBoss,
+    bosses: () => ({ active: activeBosses, spawned: bossesSpawned }),
     flags: () => ({ started, over, leveling }),
     backend: () => (onWebGPU() ? 'webgpu' : 'webgl2'),
     bloom: () => !!post,
@@ -353,9 +386,18 @@ async function start() {
 
     swarm.sweepDead((x, z, xp, type) => {
       state.kills++;
-      gems.spawn(x, z, xp);
       const t = ENEMY_TYPES[type];
-      particles.burst(x, t.radius, z, t.color, type >= 2 ? 26 : 10);
+      if (type === BOSS_TYPE) {
+        activeBosses--;
+        // bosses pay out a cluster of gems and a big explosion
+        for (let g = 0; g < 6; g++) {
+          gems.spawn(x + (Math.random() - 0.5) * 3, z + (Math.random() - 0.5) * 3, Math.ceil(xp / 6));
+        }
+        particles.burst(x, t.radius, z, t.color, 90, 18);
+      } else {
+        gems.spawn(x, z, xp);
+        particles.burst(x, t.radius, z, t.color, type >= 2 ? 26 : 10);
+      }
     });
 
     gems.update(dt, state.time, player.position.x, player.position.z, state.magnet, v => grantXp(state, v));
@@ -369,6 +411,7 @@ async function start() {
     }
     if (state.pendingLevels > 0 && !leveling) openLevelUp();
 
+    updateBossBar();
     hud.update(state, swarm.count);
   }
 

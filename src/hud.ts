@@ -19,8 +19,13 @@ const levelupOverlay = el('levelup-overlay');
 const gameoverOverlay = el('gameover-overlay');
 const cards = el('cards');
 const goStats = el('go-stats');
+const bossWrap = el('boss-wrap');
+const bossFill = el('boss-fill');
+const bossWarn = el('boss-warn');
 
 let vignetteOpacity = 0;
+let bossWarnTimer = 0;
+let lastBossQ = -1;
 
 // dirty-check cache: the HUD runs every frame, but the DOM (and layout)
 // should only be touched when a displayed value actually changes
@@ -78,6 +83,33 @@ export function tick(dt: number): void {
     vignetteOpacity *= Math.pow(0.05, dt);
     vignette.style.opacity = vignetteOpacity.toFixed(3);
   }
+  if (bossWarnTimer > 0) {
+    bossWarnTimer -= dt;
+    if (bossWarnTimer <= 0) bossWarn.classList.add('hidden');
+  }
+}
+
+/** Show the boss HP bar at the given ratio (quantized to avoid layout churn). */
+export function setBoss(hp: number, maxHp: number): void {
+  bossWrap.classList.remove('hidden');
+  const q = Math.round(Math.max(0, Math.min(1, hp / maxHp)) * 200);
+  if (q !== lastBossQ) {
+    lastBossQ = q;
+    bossFill.style.transform = `scaleX(${q / 200})`;
+  }
+}
+
+export function hideBoss(): void {
+  if (!bossWrap.classList.contains('hidden')) {
+    bossWrap.classList.add('hidden');
+    lastBossQ = -1;
+  }
+}
+
+/** Flash the "boss incoming" banner for a couple of seconds. */
+export function bossWarning(): void {
+  bossWarn.classList.remove('hidden');
+  bossWarnTimer = 2.4;
 }
 
 export function showStart(onStart: () => void): void {

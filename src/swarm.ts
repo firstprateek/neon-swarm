@@ -12,11 +12,15 @@ export interface EnemyType {
 }
 
 export const ENEMY_TYPES: EnemyType[] = [
-  { hp: 3,   speed: 7,    radius: 0.5,  dps: 8,  xp: 1,  scale: 1.0,  color: new THREE.Color(0xff3355) },
-  { hp: 2,   speed: 11.5, radius: 0.38, dps: 6,  xp: 2,  scale: 0.76, color: new THREE.Color(0xff8822) },
-  { hp: 28,  speed: 3.6,  radius: 1.1,  dps: 18, xp: 8,  scale: 2.2,  color: new THREE.Color(0xaa33ff) },
-  { hp: 130, speed: 5,    radius: 1.6,  dps: 30, xp: 30, scale: 3.2,  color: new THREE.Color(0xffee33) },
+  { hp: 3,    speed: 7,    radius: 0.5,  dps: 8,  xp: 1,   scale: 1.0,  color: new THREE.Color(0xff3355) },
+  { hp: 2,    speed: 11.5, radius: 0.38, dps: 6,  xp: 2,   scale: 0.76, color: new THREE.Color(0xff8822) },
+  { hp: 28,   speed: 3.6,  radius: 1.1,  dps: 18, xp: 8,   scale: 2.2,  color: new THREE.Color(0xaa33ff) },
+  { hp: 130,  speed: 5,    radius: 1.6,  dps: 30, xp: 30,  scale: 3.2,  color: new THREE.Color(0xffee33) },
+  { hp: 1500, speed: 3.1,  radius: 3.4,  dps: 45, xp: 220, scale: 6.8,  color: new THREE.Color(0xff44ff) }, // boss
 ];
+
+/** index into ENEMY_TYPES for the boss */
+export const BOSS_TYPE = 4;
 
 const PLAYER_RADIUS = 0.8;
 const BOB_BUCKETS = 64;
@@ -40,6 +44,7 @@ export class Swarm {
   readonly posX: Float32Array;
   readonly posZ: Float32Array;
   readonly hp: Float32Array;
+  readonly maxHp: Float32Array;
   readonly speed: Float32Array;
   readonly radius: Float32Array;
   readonly dps: Float32Array;
@@ -57,6 +62,7 @@ export class Swarm {
     this.posX = new Float32Array(max);
     this.posZ = new Float32Array(max);
     this.hp = new Float32Array(max);
+    this.maxHp = new Float32Array(max);
     this.speed = new Float32Array(max);
     this.radius = new Float32Array(max);
     this.dps = new Float32Array(max);
@@ -80,13 +86,13 @@ export class Swarm {
     this.mesh.visible = this.count > 0;
   }
 
-  spawn(typeIdx: number, x: number, z: number): void {
+  spawn(typeIdx: number, x: number, z: number, hpOverride?: number): void {
     if (this.count >= this.max) return;
     const i = this.count++;
     const t = ENEMY_TYPES[typeIdx];
     this.posX[i] = x;
     this.posZ[i] = z;
-    this.hp[i] = t.hp;
+    this.hp[i] = this.maxHp[i] = hpOverride ?? t.hp;
     this.speed[i] = t.speed * (0.9 + Math.random() * 0.2);
     this.radius[i] = t.radius;
     this.dps[i] = t.dps;
@@ -122,6 +128,7 @@ export class Swarm {
       this.posX[i] = this.posX[last];
       this.posZ[i] = this.posZ[last];
       this.hp[i] = this.hp[last];
+      this.maxHp[i] = this.maxHp[last];
       this.speed[i] = this.speed[last];
       this.radius[i] = this.radius[last];
       this.dps[i] = this.dps[last];
