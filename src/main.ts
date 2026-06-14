@@ -9,6 +9,7 @@ import { Bullets, Gems, Particles } from './combat';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize, BOSS_INTERVAL } from './director';
 import { createQuality, governQuality, QUALITY_TIERS, MAX_TIER } from './perf';
+import { loadSettings, saveSettings, qualityTier, type Settings, type QualityMode } from './settings';
 import * as sfx from './sfx';
 import * as hud from './hud';
 
@@ -76,10 +77,17 @@ async function start() {
   const forceGL = params.has('webgl'); // force the WebGL2 backend
   const pinGPU = params.has('webgpu'); // trust WebGPU, skip the watchdog probe
   const noBloom = params.has('nobloom');
-  const targetFps = Math.max(30, Number(params.get('fps')) || 120);
-  const targetFrameMs = 1000 / targetFps;
-  // ?quality=N pins a tier and disables the adaptive governor (N=0 best..3 cheapest)
-  const pinnedTier = params.has('quality') ? Math.max(0, Math.min(MAX_TIER, Number(params.get('quality')) | 0)) : -1;
+
+  // persisted player settings; URL params still override below
+  const settings = loadSettings();
+  let targetFps = settings.fps;
+  let targetFrameMs = 1000 / targetFps;
+  // pinnedTier >= 0 pins a quality tier and disables the adaptive governor; -1 = auto
+  let pinnedTier = qualityTier(settings.quality);
+  let bloomAllowed = settings.bloom; // user bloom toggle (separate from the per-tier flag)
+  if (params.has('fps')) { targetFps = Math.max(30, Number(params.get('fps')) || 120); targetFrameMs = 1000 / targetFps; }
+  if (params.has('quality')) pinnedTier = Math.max(-1, Math.min(MAX_TIER, Number(params.get('quality')) | 0));
+  if (noBloom) bloomAllowed = false;
 
   let renderer = await makeRenderer(forceGL);
   const app = document.getElementById('app')!;
@@ -180,17 +188,17 @@ async function start() {
 
   // --- adaptive quality governor (holds the target frame rate) ---
   const quality = createQuality(targetFrameMs);
-  if (pinnedTier >= 0) quality.tier = pinnedTier;
   let bloomEnabled = !!post;
 
   function applyQuality(): void {
     const tq = QUALITY_TIERS[quality.tier];
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, tq.pixelRatioCap));
     renderer.setSize(window.innerWidth, window.innerHeight);
-    bloomEnabled = tq.bloom && !!post;
-    const gov = pinnedTier >= 0 ? 'pinned' : `${targetFps}fps target`;
-    hud.setBackend(`${onWebGPU() ? 'WebGPU' : 'WebGL2'}${backendNote} · ${gov} · quality: ${tq.label}${post ? '' : ' (no bloom)'}`);
+    bloomEnabled = bloomAllowed && tq.bloom && !!post;
+    const gov = pinnedTier >= 0 ? 'fixed' : `${targetFps}fps target`;
+    hud.setBackend(`${onWebGPU() ? 'WebGPU' : 'WebGL2'}${backendNote} · ${gov} · quality: ${tq.label}${bloomEnabled ? '' : ' (no bloom)'}`);
   }
+  if (pinnedTier >= 0) quality.tier = pinnedTier;
   applyQuality();
 
   window.addEventListener('resize', () => {
@@ -204,15 +212,65 @@ async function start() {
   let started = false;
   let over = false;
   let leveling = false;
+  let paused = false;
   let shake = 0; // screen-shake magnitude, decays each frame
   const addShake = (a: number) => { shake = Math.min(2.2, shake + a); };
   let hitStop = 0; // brief slow-mo (seconds of real time) for impact on big events
 
+  // apply persisted audio settings (URL ?mute still wins)
+  sfx.setVolume(settings.volume / 100);
+  sfx.setMuted(!settings.sound);
   if (params.has('mute')) sfx.setMuted(true);
+
   hud.showStart(() => { started = true; sfx.initAudio(); });
+
+  function togglePause(): void {
+    if (!started || over || leveling) return; // can't pause pre-start, dead, or mid-level-up
+    paused = !paused;
+    if (paused) { syncPauseControls(); hud.showPause(); }
+    else hud.hidePause();
+  }
+
   window.addEventListener('keydown', e => {
     if (e.code === 'KeyM') sfx.toggleMute();
+    else if (e.code === 'Escape') togglePause();
   });
+
+  // --- pause-menu settings controls ---
+  const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+  const qSel = byId<HTMLSelectElement>('set-quality');
+  const fpsSel = byId<HTMLSelectElement>('set-fps');
+  const bloomChk = byId<HTMLInputElement>('set-bloom');
+  const soundChk = byId<HTMLInputElement>('set-sound');
+  const volRange = byId<HTMLInputElement>('set-volume');
+
+  function syncPauseControls(): void {
+    qSel.value = settings.quality;
+    fpsSel.value = String(settings.fps);
+    bloomChk.checked = settings.bloom;
+    soundChk.checked = settings.sound;
+    volRange.value = String(settings.volume);
+  }
+
+  function applySettings(): void {
+    targetFps = settings.fps;
+    targetFrameMs = 1000 / targetFps;
+    pinnedTier = qualityTier(settings.quality);
+    if (pinnedTier >= 0) quality.tier = pinnedTier;
+    bloomAllowed = settings.bloom;
+    sfx.setMuted(!settings.sound);
+    sfx.setVolume(settings.volume / 100);
+    applyQuality();
+    saveSettings(settings);
+  }
+
+  qSel.addEventListener('change', () => { settings.quality = qSel.value as QualityMode; applySettings(); });
+  fpsSel.addEventListener('change', () => { settings.fps = Number(fpsSel.value); applySettings(); });
+  bloomChk.addEventListener('change', () => { settings.bloom = bloomChk.checked; applySettings(); });
+  soundChk.addEventListener('change', () => { settings.sound = soundChk.checked; applySettings(); });
+  volRange.addEventListener('input', () => { settings.volume = Number(volRange.value); applySettings(); });
+  byId<HTMLButtonElement>('resume-btn').addEventListener('click', () => togglePause());
+  byId<HTMLButtonElement>('pause-restart-btn').addEventListener('click', () => location.reload());
 
   function openLevelUp(): void {
     const choices = rollUpgrades(3);
@@ -380,7 +438,8 @@ async function start() {
     state, swarm, bullets, gems, particles, orbitals, tesla, player, camera, upgrades: UPGRADES,
     spawnBoss,
     bosses: () => ({ active: activeBosses, spawned: bossesSpawned }),
-    flags: () => ({ started, over, leveling }),
+    flags: () => ({ started, over, leveling, paused }),
+    togglePause,
     quality: () => ({ tier: quality.tier, label: QUALITY_TIERS[quality.tier].label, emaMs: +quality.emaMs.toFixed(2), bloom: bloomEnabled, pixelRatio: renderer.getPixelRatio() }),
     shake: () => shake,
     addShake,
@@ -395,7 +454,7 @@ async function start() {
     bloom: () => !!post,
     step: (dt = 1 / 60, frames = 1) => {
       for (let i = 0; i < frames; i++) {
-        if (started && !over && !leveling) update(dt);
+        if (started && !over && !leveling && !paused) update(dt);
         else if (over) particles.update(dt);
         hud.tick(dt);
       }
@@ -532,7 +591,7 @@ async function start() {
       simDt = dt * 0.18;
     }
 
-    if (started && !over && !leveling) update(simDt);
+    if (started && !over && !leveling && !paused) update(simDt);
     else if (over) particles.update(simDt); // let the death explosion play out
     hud.tick(dt);
 

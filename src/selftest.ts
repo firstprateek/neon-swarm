@@ -11,6 +11,7 @@ import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize } from './director';
 import { createQuality, governQuality, MAX_TIER } from './perf';
 import * as sfx from './sfx';
+import { defaultSettings, mergeSettings, qualityTier } from './settings';
 import { createState, grantXp, xpForLevel, rollUpgrades, registerKill, tickCombo, comboMultiplier, SCORE_BY_TYPE, UPGRADES } from './state';
 import { getMove } from './input';
 import * as hud from './hud';
@@ -404,6 +405,24 @@ function run(): void {
     const q4 = createQuality(target);
     for (let i = 0; i < 400; i++) governQuality(q4, 2, target, 1 / 60);
     check('perf: clamps at best tier (no underflow)', q4.tier === 0);
+  }
+
+  // ---------- Settings ----------
+  {
+    const d = defaultSettings();
+    check('settings: sane defaults', d.quality === 'auto' && d.fps === 120 && d.sound === true && d.volume === 45 && d.bloom === true);
+    // garbage / partial input is validated + clamped, never trusted
+    check('settings: merge rejects garbage', JSON.stringify(mergeSettings(null)) === JSON.stringify(d) && JSON.stringify(mergeSettings('nope')) === JSON.stringify(d));
+    const m = mergeSettings({ quality: 'banana', fps: 999, volume: 250, bloom: 'yes', sound: false });
+    check('settings: invalid quality falls back', m.quality === 'auto', m.quality);
+    check('settings: invalid fps falls back', m.fps === 120, String(m.fps));
+    check('settings: volume clamped to 0..100', m.volume === 100, String(m.volume));
+    check('settings: non-boolean bloom falls back to default', m.bloom === true);
+    check('settings: valid boolean preserved', m.sound === false);
+    const m2 = mergeSettings({ quality: 'low', fps: 144, volume: 30, bloom: false, sound: true });
+    check('settings: valid values preserved', m2.quality === 'low' && m2.fps === 144 && m2.volume === 30 && m2.bloom === false);
+    // quality -> governor tier mapping
+    check('settings: qualityTier maps modes', qualityTier('auto') === -1 && qualityTier('ultra') === 0 && qualityTier('high') === 1 && qualityTier('medium') === 2 && qualityTier('low') === 3);
   }
 
   // ---------- Audio (sfx) ----------

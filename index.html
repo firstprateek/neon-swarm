@@ -73,6 +73,15 @@
     #restart-btn:hover { background: rgba(94,242,255,0.12); box-shadow: 0 0 20px rgba(94,242,255,0.4); }
     .death-title { font-size: 40px; letter-spacing: 8px; color: var(--danger); text-shadow: 0 0 24px var(--danger); }
 
+    .settings-panel { display: flex; flex-direction: column; gap: 12px; width: 320px; background: var(--panel); border: 1px solid rgba(94,242,255,0.3); padding: 20px 22px; }
+    .settings-panel label { display: flex; align-items: center; justify-content: space-between; font-size: 13px; letter-spacing: 2px; color: #a8ccd6; gap: 14px; }
+    .settings-panel select, .settings-panel input[type="range"] { font-family: inherit; font-size: 13px; background: rgba(0,0,0,0.4); color: var(--accent); border: 1px solid var(--accent-dim); padding: 4px 6px; }
+    .settings-panel input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
+    .settings-panel input[type="range"] { width: 140px; accent-color: var(--accent); }
+    .pause-buttons { display: flex; gap: 16px; }
+    .pause-buttons button { padding: 12px 30px; font-family: inherit; font-size: 15px; letter-spacing: 3px; background: transparent; color: var(--accent); border: 1px solid var(--accent); cursor: pointer; }
+    .pause-buttons button:hover { background: rgba(94,242,255,0.12); box-shadow: 0 0 18px rgba(94,242,255,0.4); }
+
     #boss-wrap { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); width: 46%; max-width: 620px; text-align: center; }
     #boss-wrap.hidden { display: none; }
     #boss-name { font-size: 13px; letter-spacing: 5px; color: #ff77ff; text-shadow: 0 0 10px #ff44ff; margin-bottom: 5px; }
@@ -127,6 +136,36 @@
     <div class="death-title">CONSUMED</div>
     <div class="gostats" id="go-stats"></div>
     <button id="restart-btn">RESTART</button>
+  </div>
+
+  <div id="pause-overlay" class="overlay hidden">
+    <div class="title" style="font-size: 40px; letter-spacing: 10px;">PAUSED</div>
+    <div class="settings-panel">
+      <label>QUALITY
+        <select id="set-quality">
+          <option value="auto">Auto (adaptive)</option>
+          <option value="ultra">Ultra</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+      </label>
+      <label>FPS TARGET
+        <select id="set-fps">
+          <option value="60">60</option>
+          <option value="120">120</option>
+          <option value="144">144</option>
+        </select>
+      </label>
+      <label>BLOOM <input type="checkbox" id="set-bloom" /></label>
+      <label>SOUND <input type="checkbox" id="set-sound" /></label>
+      <label>VOLUME <input type="range" id="set-volume" min="0" max="100" /></label>
+    </div>
+    <div class="pause-buttons">
+      <button id="resume-btn">RESUME</button>
+      <button id="pause-restart-btn">RESTART</button>
+    </div>
+    <div class="subtitle">ESC TO RESUME</div>
   </div>
 
   <script type="module" src="/src/main.ts"></script>

@@ -19,6 +19,7 @@ const levelupOverlay = el('levelup-overlay');
 const gameoverOverlay = el('gameover-overlay');
 const cards = el('cards');
 const goStats = el('go-stats');
+const pauseOverlay = el('pause-overlay');
 const bossWrap = el('boss-wrap');
 const bossFill = el('boss-fill');
 const bossWarn = el('boss-warn');
@@ -232,6 +233,10 @@ export function showLevelUp(choices: Upgrade[], onPick: (u: Upgrade) => void): v
   window.addEventListener('keydown', keyHandler);
   levelupOverlay.classList.remove('hidden');
 }
+
+export function showPause(): void { pauseOverlay.classList.remove('hidden'); }
+export function hidePause(): void { pauseOverlay.classList.add('hidden'); }
+export function isPauseOpen(): boolean { return !pauseOverlay.classList.contains('hidden'); }
 
 export function showGameOver(state: GameState): void {
   const mins = (state.time / 60) | 0;

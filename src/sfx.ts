@@ -7,7 +7,7 @@
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
 let muted = false;
-const VOLUME = 0.45;
+let volume = 0.45; // 0..1 master volume when unmuted
 const lastPlay: Record<string, number> = {};
 
 function clock(): number {
@@ -26,7 +26,7 @@ export function initAudio(): void {
     if (!AC) return;
     ctx = new AC();
     master = ctx.createGain();
-    master.gain.value = muted ? 0 : VOLUME;
+    master.gain.value = muted ? 0 : volume;
     master.connect(ctx.destination);
     if (ctx.state === 'suspended') void ctx.resume();
   } catch {
@@ -36,11 +36,18 @@ export function initAudio(): void {
 
 export function setMuted(m: boolean): void {
   muted = m;
-  if (master) master.gain.value = m ? 0 : VOLUME;
+  if (master) master.gain.value = m ? 0 : volume;
 }
 export function isMuted(): boolean { return muted; }
 export function toggleMute(): boolean { setMuted(!muted); return muted; }
 export function audioReady(): boolean { return !!ctx && !!master; }
+
+/** set master volume (0..1) */
+export function setVolume(v: number): void {
+  volume = Math.max(0, Math.min(1, v));
+  if (master && !muted) master.gain.value = volume;
+}
+export function getVolume(): number { return volume; }
 
 /** true if enough time passed since this name last played */
 function throttle(name: string, ms: number): boolean {
