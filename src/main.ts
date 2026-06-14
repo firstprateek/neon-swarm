@@ -206,6 +206,7 @@ async function start() {
   let leveling = false;
   let shake = 0; // screen-shake magnitude, decays each frame
   const addShake = (a: number) => { shake = Math.min(2.2, shake + a); };
+  let hitStop = 0; // brief slow-mo (seconds of real time) for impact on big events
 
   if (params.has('mute')) sfx.setMuted(true);
   hud.showStart(() => { started = true; sfx.initAudio(); });
@@ -282,18 +283,43 @@ async function start() {
     }
   }
 
-  /** Track the toughest living boss for the HUD bar (scan only when bosses exist). */
-  function updateBossBar(): void {
-    if (activeBosses <= 0) { hud.hideBoss(); return; }
-    let bestHp = -1, bestMax = 1;
+  // project a world point to screen pixels (null if behind the camera)
+  const _proj = new THREE.Vector3();
+  function projectToScreen(x: number, y: number, z: number): { sx: number; sy: number } | null {
+    _proj.set(x, y, z).project(camera);
+    if (_proj.z > 1) return null;
+    return { sx: (_proj.x * 0.5 + 0.5) * window.innerWidth, sy: (-_proj.y * 0.5 + 0.5) * window.innerHeight };
+  }
+  let prevBossHp = -1, bossDmgAccum = 0, bossDmgTimer = 0;
+
+  /** Track the toughest living boss for the HUD bar + floating damage numbers. */
+  function updateBossBar(dt: number): void {
+    if (activeBosses <= 0) { hud.hideBoss(); prevBossHp = -1; return; }
+    let bestHp = -1, bestMax = 1, bx = 0, bz = 0;
     for (let i = 0; i < swarm.count; i++) {
       if (swarm.type[i] === BOSS_TYPE && swarm.hp[i] > bestHp) {
         bestHp = swarm.hp[i];
         bestMax = swarm.maxHp[i];
+        bx = swarm.posX[i];
+        bz = swarm.posZ[i];
       }
     }
-    if (bestHp >= 0) hud.setBoss(bestHp, bestMax);
-    else hud.hideBoss();
+    if (bestHp < 0) { hud.hideBoss(); prevBossHp = -1; return; }
+    hud.setBoss(bestHp, bestMax);
+
+    // accumulate damage to the lead boss; pop a floating number periodically
+    if (prevBossHp >= 0) {
+      const d = prevBossHp - bestHp;
+      if (d > 0 && d < prevBossHp) bossDmgAccum += d; // skip spawn/death/new-boss jumps
+    }
+    prevBossHp = bestHp;
+    bossDmgTimer -= dt;
+    if (bossDmgTimer <= 0 && bossDmgAccum >= 1) {
+      const sp = projectToScreen(bx, ENEMY_TYPES[BOSS_TYPE].radius + 2.5, bz);
+      if (sp) hud.floatText(sp.sx, sp.sy, '-' + Math.round(bossDmgAccum), '#ff77ff');
+      bossDmgAccum = 0;
+      bossDmgTimer = 0.2;
+    }
   }
 
   // --- firing ---
@@ -358,6 +384,7 @@ async function start() {
     quality: () => ({ tier: quality.tier, label: QUALITY_TIERS[quality.tier].label, emaMs: +quality.emaMs.toFixed(2), bloom: bloomEnabled, pixelRatio: renderer.getPixelRatio() }),
     shake: () => shake,
     addShake,
+    hitStop: () => hitStop,
     audio: () => ({ ready: sfx.audioReady(), muted: sfx.isMuted() }),
     // test hook: feed a synthetic frame time to the governor and apply any tier change
     feedFrame: (frameMs: number) => {
@@ -455,6 +482,7 @@ async function start() {
         }
         particles.burst(x, t.radius, z, t.color, 90, 18);
         addShake(1.4);
+        hitStop = 0.12; // punchy micro-freeze on the kill
         sfx.sfxBossDie();
       } else {
         gems.spawn(x, z, xp);
@@ -474,7 +502,7 @@ async function start() {
     }
     if (state.pendingLevels > 0 && !leveling) openLevelUp();
 
-    updateBossBar();
+    updateBossBar(dt);
     hud.update(state, swarm.count);
   }
 
@@ -497,8 +525,15 @@ async function start() {
       applyQuality();
     }
 
-    if (started && !over && !leveling) update(dt);
-    else if (over) particles.update(dt); // let the death explosion play out
+    // hit-stop: briefly slow the simulation for impact (UI/FPS use real time)
+    let simDt = dt;
+    if (hitStop > 0) {
+      hitStop -= rawDt;
+      simDt = dt * 0.18;
+    }
+
+    if (started && !over && !leveling) update(simDt);
+    else if (over) particles.update(simDt); // let the death explosion play out
     hud.tick(dt);
 
     if (post && bloomEnabled) post.render();

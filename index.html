@@ -81,6 +81,9 @@
     #boss-warn { position: absolute; top: 26%; left: 50%; transform: translateX(-50%); font-size: 30px; letter-spacing: 8px; color: #ff66ff; text-shadow: 0 0 18px #ff44ff; animation: bosspulse 0.5s ease-in-out infinite; }
     #boss-warn.hidden { display: none; }
     @keyframes bosspulse { 50% { opacity: 0.35; transform: translateX(-50%) scale(1.06); } }
+
+    #floaters { position: absolute; inset: 0; overflow: hidden; }
+    .floater { position: absolute; left: 0; top: 0; display: none; font-size: 22px; font-weight: 700; letter-spacing: 1px; text-shadow: 0 0 8px currentColor; will-change: transform, opacity; }
   </style>
 </head>
 <body>
@@ -105,6 +108,7 @@
       <div id="boss-bar"><div id="boss-fill"></div></div>
     </div>
     <div id="boss-warn" class="hidden">⚠ BOSS INCOMING ⚠</div>
+    <div id="floaters"></div>
     <div id="vignette"></div>
   </div>
 

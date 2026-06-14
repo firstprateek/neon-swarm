@@ -27,6 +27,8 @@ const BOB_BUCKETS = 64;
 
 /** seconds an enemy flashes white after being hit */
 export const HIT_FLASH = 0.09;
+/** seconds for a newly spawned enemy to scale up from nothing (spawn telegraph) */
+const GROW_T = 0.25;
 
 /**
  * All enemies live in packed structure-of-arrays buffers and render as a
@@ -58,6 +60,8 @@ export class Swarm {
   readonly type: Uint8Array;
   readonly flash: Float32Array;   // hit-flash timer (seconds remaining)
   readonly baseCol: Float32Array; // per-instance base color, to restore after a flash
+  readonly age: Float32Array;     // seconds since spawn (drives the scale-in telegraph)
+  readonly baseScale: Float32Array; // target render scale per instance
 
   readonly mesh: THREE.InstancedMesh;
   private readonly pulse = new Float32Array(BOB_BUCKETS);
@@ -77,6 +81,8 @@ export class Swarm {
     this.type = new Uint8Array(max);
     this.flash = new Float32Array(max);
     this.baseCol = new Float32Array(max * 3);
+    this.age = new Float32Array(max);
+    this.baseScale = new Float32Array(max);
 
     const geo = new THREE.IcosahedronGeometry(0.5, 0);
     // Lambert (diffuse-only) instead of Standard (full PBR): the swarm is the
@@ -112,11 +118,13 @@ export class Swarm {
     this.bob[i] = (Math.random() * BOB_BUCKETS) | 0;
     this.type[i] = typeIdx;
     this.flash[i] = 0;
+    this.age[i] = 0;
+    this.baseScale[i] = t.scale;
 
     const m = this.mesh.instanceMatrix.array as Float32Array;
     const o = i * 16;
     m.fill(0, o, o + 16);
-    m[o] = m[o + 5] = m[o + 10] = t.scale;
+    // start at scale 0 — update() grows it in over GROW_T (spawn telegraph)
     m[o + 12] = x;
     m[o + 13] = t.radius;
     m[o + 14] = z;
@@ -150,6 +158,8 @@ export class Swarm {
       this.bob[i] = this.bob[last];
       this.type[i] = this.type[last];
       this.flash[i] = this.flash[last];
+      this.age[i] = this.age[last];
+      this.baseScale[i] = this.baseScale[last];
       this.baseCol.copyWithin(i * 3, last * 3, last * 3 + 3);
       const m = this.mesh.instanceMatrix.array as Float32Array;
       m.copyWithin(i * 16, last * 16, last * 16 + 16);
@@ -166,7 +176,7 @@ export class Swarm {
    * stacking. Returns contact damage dealt to the player this frame.
    */
   update(dt: number, time: number, playerX: number, playerZ: number, grid: SpatialGrid): number {
-    const { posX, posZ, speed, radius, dps, bob, count, pulse, flash, baseCol } = this;
+    const { posX, posZ, speed, radius, dps, bob, count, pulse, flash, baseCol, age, baseScale } = this;
     const m = this.mesh.instanceMatrix.array as Float32Array;
     const col = this.mesh.instanceColor!.array as Float32Array;
     const { cellStart, indices, dim } = grid;
@@ -218,7 +228,14 @@ export class Swarm {
 
       if (d < r + PLAYER_RADIUS) playerDamage += dps[i] * dt;
 
+      // spawn telegraph: scale up from 0 to the target over GROW_T
+      age[i] += dt;
+      const sc = age[i] < GROW_T ? baseScale[i] * (age[i] / GROW_T) : baseScale[i];
+
       const o = i * 16;
+      m[o] = sc;
+      m[o + 5] = sc;
+      m[o + 10] = sc;
       m[o + 12] = nx;
       m[o + 13] = r * pulse[bob[i]];
       m[o + 14] = nz;

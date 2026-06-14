@@ -349,6 +349,30 @@ function run(): void {
     check('flash: color restores to base after flash ends', Math.abs(col[1] - baseG) < 1e-4, `colG=${col[1]} baseG=${baseG}`);
   }
 
+  // ---------- Spawn telegraph (scale-in) ----------
+  {
+    const scene = new THREE.Scene();
+    const sw = new Swarm(4, scene);
+    sw.spawn(0, 3, 0); // grunt, base scale 1.0
+    const m = sw.mesh.instanceMatrix.array as Float32Array;
+    check('telegraph: spawns at scale 0', m[0] === 0, String(m[0]));
+    const g = new SpatialGrid(2.5, 16, 4);
+    g.build(sw.posX, sw.posZ, sw.count, 0, 0);
+    sw.update(0.05, 0, 0, 0, g); // age 0.05 of 0.25 -> ~20%
+    check('telegraph: scales in (small but growing)', m[0] > 0 && m[0] < sw.baseScale[0], `scale=${m[0].toFixed(3)} base=${sw.baseScale[0]}`);
+    for (let t = 0; t < 10; t++) { g.build(sw.posX, sw.posZ, sw.count, 0, 0); sw.update(0.05, 0, 0, 0, g); }
+    check('telegraph: reaches full scale after grow-in', Math.abs(m[0] - sw.baseScale[0]) < 1e-4, `scale=${m[0]} base=${sw.baseScale[0]}`);
+  }
+
+  // ---------- Floating text (boss damage numbers) ----------
+  {
+    const f0 = hud.activeFloaters();
+    hud.floatText(100, 120, '-42', '#ff77ff');
+    check('floater: floatText activates one', hud.activeFloaters() === f0 + 1, String(hud.activeFloaters()));
+    for (let t = 0; t < 60; t++) hud.tick(1 / 30); // ~2s, past the 0.85s life
+    check('floater: floaters expire and free up', hud.activeFloaters() === 0, String(hud.activeFloaters()));
+  }
+
   // ---------- Perf governor ----------
   {
     const target = 1000 / 120; // 8.33ms

@@ -24,10 +24,59 @@ const bossFill = el('boss-fill');
 const bossWarn = el('boss-warn');
 const scoreTxt = el('score');
 const comboTxt = el('combo');
+const floatersEl = el('floaters');
 
 let vignetteOpacity = 0;
 let bossWarnTimer = 0;
 let lastBossQ = -1;
+
+// --- pooled floating text (e.g. boss damage numbers) ---
+interface Floater { el: HTMLSpanElement; x: number; y: number; life: number; maxLife: number }
+const floaters: Floater[] = [];
+const FLOATER_POOL = 18;
+
+function getFloater(): Floater {
+  for (const f of floaters) if (f.life <= 0) return f;
+  if (floaters.length < FLOATER_POOL) {
+    const span = document.createElement('span');
+    span.className = 'floater';
+    floatersEl.appendChild(span);
+    const f: Floater = { el: span, x: 0, y: 0, life: 0, maxLife: 1 };
+    floaters.push(f);
+    return f;
+  }
+  let oldest = floaters[0];
+  for (const f of floaters) if (f.life < oldest.life) oldest = f;
+  return oldest;
+}
+
+/** Spawn a short-lived number/text that floats up and fades at screen (x,y). */
+export function floatText(x: number, y: number, text: string, color = '#ffe24a'): void {
+  const f = getFloater();
+  f.x = x; f.y = y; f.life = f.maxLife = 0.85;
+  f.el.textContent = text;
+  f.el.style.color = color;
+  f.el.style.opacity = '1';
+  f.el.style.display = 'block';
+  f.el.style.transform = `translate(${x}px, ${y}px)`;
+}
+
+function updateFloaters(dt: number): void {
+  for (const f of floaters) {
+    if (f.life <= 0) continue;
+    f.life -= dt;
+    if (f.life <= 0) { f.el.style.display = 'none'; continue; }
+    f.y -= 46 * dt; // drift up (px/s)
+    const a = f.life / f.maxLife;
+    f.el.style.opacity = a.toFixed(2);
+    f.el.style.transform = `translate(${f.x}px, ${f.y}px) scale(${1 + (1 - a) * 0.35})`;
+  }
+}
+
+/** count of currently-visible floaters (for tests) */
+export function activeFloaters(): number {
+  return floaters.reduce((n, f) => n + (f.life > 0 ? 1 : 0), 0);
+}
 
 // dirty-check cache: the HUD runs every frame, but the DOM (and layout)
 // should only be touched when a displayed value actually changes
@@ -112,6 +161,7 @@ export function tick(dt: number): void {
     bossWarnTimer -= dt;
     if (bossWarnTimer <= 0) bossWarn.classList.add('hidden');
   }
+  updateFloaters(dt);
 }
 
 /** Show the boss HP bar at the given ratio (quantized to avoid layout churn). */
