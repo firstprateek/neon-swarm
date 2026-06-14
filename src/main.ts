@@ -8,6 +8,7 @@ import { Swarm, ENEMY_TYPES, BOSS_TYPE } from './swarm';
 import { Bullets, Gems, Particles } from './combat';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize, BOSS_INTERVAL } from './director';
+import { createQuality, governQuality, QUALITY_TIERS, MAX_TIER } from './perf';
 import * as hud from './hud';
 
 const MAX_ENEMIES = 20000;
@@ -74,6 +75,10 @@ async function start() {
   const forceGL = params.has('webgl'); // force the WebGL2 backend
   const pinGPU = params.has('webgpu'); // trust WebGPU, skip the watchdog probe
   const noBloom = params.has('nobloom');
+  const targetFps = Math.max(30, Number(params.get('fps')) || 120);
+  const targetFrameMs = 1000 / targetFps;
+  // ?quality=N pins a tier and disables the adaptive governor (N=0 best..3 cheapest)
+  const pinnedTier = params.has('quality') ? Math.max(0, Math.min(MAX_TIER, Number(params.get('quality')) | 0)) : -1;
 
   let renderer = await makeRenderer(forceGL);
   const app = document.getElementById('app')!;
@@ -172,12 +177,25 @@ async function start() {
     }
   }
 
-  hud.setBackend(`${onWebGPU() ? 'WebGPU' : 'WebGL2'}${backendNote} · ${MAX_ENEMIES.toLocaleString()} swarm cap · bloom ${post ? 'on' : 'off'}`);
+  // --- adaptive quality governor (holds the target frame rate) ---
+  const quality = createQuality(targetFrameMs);
+  if (pinnedTier >= 0) quality.tier = pinnedTier;
+  let bloomEnabled = !!post;
+
+  function applyQuality(): void {
+    const tq = QUALITY_TIERS[quality.tier];
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, tq.pixelRatioCap));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    bloomEnabled = tq.bloom && !!post;
+    const gov = pinnedTier >= 0 ? 'pinned' : `${targetFps}fps target`;
+    hud.setBackend(`${onWebGPU() ? 'WebGPU' : 'WebGL2'}${backendNote} · ${gov} · quality: ${tq.label}${post ? '' : ' (no bloom)'}`);
+  }
+  applyQuality();
 
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY_TIERS[quality.tier].pixelRatioCap));
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
@@ -320,6 +338,12 @@ async function start() {
     spawnBoss,
     bosses: () => ({ active: activeBosses, spawned: bossesSpawned }),
     flags: () => ({ started, over, leveling }),
+    quality: () => ({ tier: quality.tier, label: QUALITY_TIERS[quality.tier].label, emaMs: +quality.emaMs.toFixed(2), bloom: bloomEnabled, pixelRatio: renderer.getPixelRatio() }),
+    // test hook: feed a synthetic frame time to the governor and apply any tier change
+    feedFrame: (frameMs: number) => {
+      if (governQuality(quality, frameMs, targetFrameMs, 1 / 60)) applyQuality();
+      return quality.tier;
+    },
     backend: () => (onWebGPU() ? 'webgpu' : 'webgl2'),
     bloom: () => !!post,
     step: (dt = 1 / 60, frames = 1) => {
@@ -328,7 +352,7 @@ async function start() {
         else if (over) particles.update(dt);
         hud.tick(dt);
       }
-      if (post) post.render();
+      if (post && bloomEnabled) post.render();
       else renderer.render(scene, camera);
       prev = performance.now();
     },
@@ -429,11 +453,16 @@ async function start() {
       fpsTime = 0;
     }
 
+    // hold the target frame rate by flexing quality (skip while pinned)
+    if (pinnedTier < 0 && governQuality(quality, rawDt * 1000, targetFrameMs, rawDt)) {
+      applyQuality();
+    }
+
     if (started && !over && !leveling) update(dt);
     else if (over) particles.update(dt); // let the death explosion play out
     hud.tick(dt);
 
-    if (post) post.render();
+    if (post && bloomEnabled) post.render();
     else renderer.render(scene, camera);
   });
 }

@@ -9,6 +9,7 @@ import { Swarm, ENEMY_TYPES, BOSS_TYPE } from './swarm';
 import { Bullets, Gems, Particles } from './combat';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize } from './director';
+import { createQuality, governQuality, MAX_TIER } from './perf';
 import { createState, grantXp, xpForLevel, rollUpgrades, UPGRADES } from './state';
 import { getMove } from './input';
 import * as hud from './hud';
@@ -303,6 +304,39 @@ function run(): void {
     check('director: early game is grunts only', rollEnemyType(10, 0.01) === 0 && rollEnemyType(10, 0.99) === 0);
     check('director: tanks/elites gated to later', rollEnemyType(30, 0.05) <= 1 && rollEnemyType(300, 0.05) === 3,
       `${rollEnemyType(30, 0.05)},${rollEnemyType(300, 0.05)}`);
+  }
+
+  // ---------- Perf governor ----------
+  {
+    const target = 1000 / 120; // 8.33ms
+    const q = createQuality(target);
+    check('perf: starts at best tier', q.tier === 0);
+
+    // sustained overload should degrade all the way to the cheapest tier
+    for (let i = 0; i < 800; i++) governQuality(q, 20, target, 1 / 60);
+    check('perf: sustained overload degrades to max tier', q.tier === MAX_TIER, `tier=${q.tier}`);
+
+    // comfortable headroom should restore quality to the best tier
+    for (let i = 0; i < 1600; i++) governQuality(q, 3, target, 1 / 60);
+    check('perf: headroom recovers to best tier', q.tier === 0, `tier=${q.tier}`);
+
+    // pause/stall frames must be ignored, not punished
+    const q2 = createQuality(target);
+    const ema0 = q2.emaMs;
+    const changed = governQuality(q2, 500, target, 1 / 60);
+    check('perf: stall frame ignored', changed === false && q2.emaMs === ema0);
+
+    // cooldown prevents back-to-back tier changes
+    const q3 = createQuality(target);
+    q3.emaMs = 20; q3.cooldown = 0;
+    const c1 = governQuality(q3, 20, target, 1 / 60);
+    const c2 = governQuality(q3, 20, target, 1 / 60);
+    check('perf: cooldown blocks consecutive changes', c1 === true && c2 === false, `${c1},${c2}`);
+
+    // never steps below 0 or above MAX_TIER
+    const q4 = createQuality(target);
+    for (let i = 0; i < 400; i++) governQuality(q4, 2, target, 1 / 60);
+    check('perf: clamps at best tier (no underflow)', q4.tier === 0);
   }
 
   // ---------- Boss enemy ----------
