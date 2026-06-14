@@ -7,6 +7,7 @@ import * as THREE from 'three/webgpu';
 import { SpatialGrid } from './spatial';
 import { Swarm, ENEMY_TYPES } from './swarm';
 import { Bullets, Gems, Particles } from './combat';
+import { Orbitals, Tesla } from './weapons';
 import { createState, grantXp, xpForLevel, rollUpgrades, UPGRADES } from './state';
 import { getMove } from './input';
 import * as hud from './hud';
@@ -223,6 +224,64 @@ function run(): void {
       if (pm[o + 12] !== 7 || pm[o + 13] !== 2 || pm[o + 14] !== -3 || pm[o] === 0) spawnMatricesOk = false;
     }
     check('particles: burst writes spawn matrices immediately', spawnMatricesOk);
+  }
+
+  // ---------- Weapons: Orbital Blades ----------
+  {
+    const scene = new THREE.Scene();
+    const orb = new Orbitals(6, scene);
+    orb.level = 0;
+    const swEmpty = new Swarm(4, scene);
+    const gEmpty = new SpatialGrid(2.5, 16, 4);
+    gEmpty.build(swEmpty.posX, swEmpty.posZ, 0, 0, 0);
+    orb.update(1 / 60, 0, 0, 0, swEmpty, gEmpty);
+    check('orbitals: hidden and inert when not acquired', orb.mesh.visible === false && orb.blades === 0);
+
+    const sw = new Swarm(16, scene);
+    // ring of grunts at the blade orbit radius (2.9) so blades sweep them
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * Math.PI * 2;
+      sw.spawn(0, Math.cos(a) * 2.9, Math.sin(a) * 2.9);
+    }
+    orb.level = 3;
+    check('orbitals: blade count scales with level', orb.blades === 4, String(orb.blades));
+    const g = new SpatialGrid(2.5, 32, 16);
+    let dealt = false;
+    for (let t = 0; t < 120; t++) {
+      g.build(sw.posX, sw.posZ, sw.count, 0, 0);
+      const hpBefore = sw.hp[0];
+      orb.update(1 / 60, t / 60, 0, 0, sw, g);
+      if (sw.hp[0] < hpBefore) dealt = true;
+    }
+    check('orbitals: blades damage overlapping enemies', dealt && orb.mesh.visible && orb.mesh.count === 4);
+  }
+
+  // ---------- Weapons: Arc Tesla ----------
+  {
+    const scene = new THREE.Scene();
+    const tes = new Tesla(64, scene);
+    const particles = new Particles(256, scene);
+    const sw = new Swarm(16, scene);
+    // tight cluster so the bolt can chain between neighbors
+    sw.spawn(2, 4, 0); sw.spawn(2, 5.5, 0); sw.spawn(2, 7, 0); sw.spawn(2, 8.5, 0);
+    const g = new SpatialGrid(2.5, 32, 16);
+    g.build(sw.posX, sw.posZ, sw.count, 0, 0);
+
+    tes.level = 0;
+    tes.update(1 / 60, 0, 0, sw, g, particles);
+    check('tesla: inert when not acquired', sw.hp[0] === 28 && tes.mesh.visible === false);
+
+    tes.level = 3; // chains = 4
+    const before = [sw.hp[0], sw.hp[1], sw.hp[2], sw.hp[3]];
+    tes.update(1 / 60, 0, 0, sw, g, particles); // cd starts at 0 -> fires this frame
+    const after = [sw.hp[0], sw.hp[1], sw.hp[2], sw.hp[3]];
+    const damagedCount = after.filter((h, i) => h < before[i]).length;
+    check('tesla: strike chains to multiple foes', damagedCount >= 3, `damaged=${damagedCount}`);
+    check('tesla: bolt segments rendered after strike', tes.mesh.visible && tes.mesh.count > 0, String(tes.mesh.count));
+    const emptySw = new Swarm(1, scene);
+    const emptyG = new SpatialGrid(2.5, 8, 1);
+    for (let t = 0; t < 30; t++) tes.update(1 / 60, 0, 0, emptySw, emptyG, particles); // no foes -> won't refire, segments age out
+    check('tesla: bolt segments fade out', tes.mesh.count === 0 && tes.mesh.visible === false, String(tes.mesh.count));
   }
 
   // ---------- State / upgrades ----------

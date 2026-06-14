@@ -15,6 +15,9 @@ export interface GameState {
   moveSpeed: number;
   magnet: number;
   bulletSpeed: number;
+  // secondary weapons — level 0 means not yet acquired
+  orbitalLevel: number;
+  teslaLevel: number;
 }
 
 export function createState(): GameState {
@@ -35,6 +38,8 @@ export function createState(): GameState {
     moveSpeed: 11,
     magnet: 4.5,
     bulletSpeed: 36,
+    orbitalLevel: 0,
+    teslaLevel: 0,
   };
 }
 
@@ -70,6 +75,8 @@ export const UPGRADES: Upgrade[] = [
   { name: 'Tractor Field', desc: '+45% pickup range', max: 6, count: 0, apply: s => { s.magnet *= 1.45; } },
   { name: 'Hull Plating', desc: '+30 max HP, restore 30 HP', max: 6, count: 0, apply: s => { s.maxHp += 30; s.hp = Math.min(s.maxHp, s.hp + 30); } },
   { name: 'Nanobot Repair', desc: '+1 HP/s regeneration', max: 5, count: 0, apply: s => { s.regen += 1; } },
+  { name: 'Orbital Blades', desc: 'spinning blades shred foes on contact (+1 blade / level)', max: 5, count: 0, apply: s => { s.orbitalLevel += 1; } },
+  { name: 'Arc Tesla', desc: 'chain lightning zaps nearby foes (+1 chain / level)', max: 5, count: 0, apply: s => { s.teslaLevel += 1; } },
 ];
 
 export function rollUpgrades(n = 3): Upgrade[] {

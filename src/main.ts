@@ -6,6 +6,7 @@ import { getMove } from './input';
 import { SpatialGrid } from './spatial';
 import { Swarm, ENEMY_TYPES } from './swarm';
 import { Bullets, Gems, Particles } from './combat';
+import { Orbitals, Tesla } from './weapons';
 import * as hud from './hud';
 
 const MAX_ENEMIES = 20000;
@@ -144,6 +145,8 @@ async function start() {
   const bullets = new Bullets(4096, scene);
   const gems = new Gems(4096, scene);
   const particles = new Particles(8192, scene);
+  const orbitals = new Orbitals(6, scene);
+  const tesla = new Tesla(64, scene);
   const grid = new SpatialGrid(2.5, 96, MAX_ENEMIES);
 
   // --- post-processing bloom, validated before use ---
@@ -282,7 +285,7 @@ async function start() {
   // step() drives the real update/render path with a fixed dt so tests
   // stay deterministic even where rAF is throttled (hidden/headless tabs)
   (window as unknown as Record<string, unknown>).__dbg = {
-    state, swarm, bullets, gems, particles, player, camera, upgrades: UPGRADES,
+    state, swarm, bullets, gems, particles, orbitals, tesla, player, camera, upgrades: UPGRADES,
     flags: () => ({ started, over, leveling }),
     backend: () => (onWebGPU() ? 'webgpu' : 'webgl2'),
     bloom: () => !!post,
@@ -341,6 +344,12 @@ async function start() {
     }
 
     bullets.update(dt, swarm, grid);
+
+    // secondary weapons read their level from game state each frame
+    orbitals.level = state.orbitalLevel;
+    orbitals.update(dt, state.time, player.position.x, player.position.z, swarm, grid);
+    tesla.level = state.teslaLevel;
+    tesla.update(dt, player.position.x, player.position.z, swarm, grid, particles);
 
     swarm.sweepDead((x, z, xp, type) => {
       state.kills++;
