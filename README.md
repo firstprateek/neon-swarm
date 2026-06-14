@@ -2,7 +2,11 @@
 
 A 3D swarm-survivor game (Vampire Survivors style) built for raw browser performance.
 
+### ▶ Play: https://firstprateek.github.io/neon-swarm/
+
 **Stack:** TypeScript · Three.js `WebGPURenderer` (auto-falls back to WebGL2) · Vite
+
+Pushing to `main` auto-deploys to GitHub Pages via `.github/workflows/deploy.yml`.
 
 ## Run
 
