@@ -7,6 +7,7 @@ import { getMove } from './input';
 import { SpatialGrid } from './spatial';
 import { Swarm, ENEMY_TYPES, BOSS_TYPE, HIT_FLASH } from './swarm';
 import { Bullets, Gems, Particles, Missiles } from './combat';
+import { Blast } from './fx';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize, BOSS_INTERVAL } from './director';
 import { createQuality, governQuality, QUALITY_TIERS, MAX_TIER } from './perf';
@@ -184,6 +185,7 @@ async function start() {
   const gems = new Gems(4096, scene);
   const particles = new Particles(8192, scene);
   const missiles = new Missiles(24, scene);
+  const blast = new Blast(scene); // cinematic nuke detonation FX
   const orbitals = new Orbitals(6, scene);
   const tesla = new Tesla(64, scene);
   const grid = new SpatialGrid(2.5, 96, MAX_ENEMIES);
@@ -535,12 +537,17 @@ async function start() {
         swarm.flash[i] = HIT_FLASH;
       }
     }
-    particles.burst(px, 1, pz, new THREE.Color(0xffffff), 160, 22);
-    hud.flash('#ffffff', 0.85);
-    addShake(2.0);
-    hitStop = 0.14;
+    // EPIC detonation: shockwave rings + ground flash + light pillar, plus
+    // layered debris — a white-hot core, a fast cyan energy ring, falling embers.
+    blast.detonate(px, pz);
+    particles.burst(px, 1.4, pz, new THREE.Color(0xffffff), 140, 30); // white-hot core
+    particles.burst(px, 0.9, pz, new THREE.Color(0x9ff0ff), 110, 46); // fast energy ring
+    particles.burst(px, 0.6, pz, new THREE.Color(0xffae3a), 130, 16); // fire / falling embers
+    hud.flash('#e6fcff', 1);
+    addShake(2.6); // clamps to the shake cap, but spends it all
+    hitStop = 0.22; // a heavier freeze for weight
     sfx.sfxBossDie();
-    hud.toast('☢ NUKE');
+    hud.toast('☢ NUCLEAR STRIKE');
   }
 
   function doDash(): void {
@@ -620,6 +627,7 @@ async function start() {
     addShake,
     hitStop: () => hitStop,
     missiles, fireMissile, fireNuke, doDash,
+    blast, blastActive: () => blast.active,
     dashReady: () => dashCd <= 0,
     iframes: () => iframes,
     seed: () => getSeed(),
@@ -637,6 +645,7 @@ async function start() {
       for (let i = 0; i < frames; i++) {
         if (started && !over && !leveling && !paused) { tickRealtime(dt); update(dt); }
         else if (over) particles.update(dt);
+        blast.update(dt);
         hud.tick(dt);
       }
       if (post && bloomEnabled) post.render();
@@ -791,6 +800,7 @@ async function start() {
 
     if (started && !over && !leveling && !paused) { tickRealtime(dt); update(simDt); }
     else if (over) particles.update(simDt); // let the death explosion play out
+    blast.update(dt); // real-time so the nuke FX plays out through hit-stop / level-up
     hud.tick(dt);
 
     if (post && bloomEnabled) post.render();

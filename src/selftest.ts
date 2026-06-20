@@ -7,6 +7,7 @@ import * as THREE from 'three/webgpu';
 import { SpatialGrid } from './spatial';
 import { Swarm, ENEMY_TYPES, BOSS_TYPE, HIT_FLASH } from './swarm';
 import { Bullets, Gems, Particles, Missiles } from './combat';
+import { Blast } from './fx';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize } from './director';
 import { setSeed, srand, getSeed, clearSeed } from './rng';
@@ -253,6 +254,21 @@ function run(): void {
       ms.update(1 / 60, sw, g, part, () => { boomed = true; });
     }
     check('missiles: homes, detonates, AoE damages enemies', sw.hp[0] < 28 && sw.hp[1] < 3 && boomed && ms.count === 0, `hp0=${sw.hp[0]} hp1=${sw.hp[1]} boom=${boomed} count=${ms.count}`);
+  }
+
+  // ---------- Nuke blast FX ----------
+  {
+    const scene = new THREE.Scene();
+    const blast = new Blast(scene);
+    check('fx: blast idle until detonated', !blast.active);
+    blast.detonate(0, 0);
+    check('fx: detonate activates the blast', blast.active);
+    for (let t = 0; t < 5; t++) blast.update(1 / 60); // ~80ms in
+    const anyVisible = scene.children.some(o => (o as THREE.Mesh).isMesh && o.visible);
+    check('fx: blast renders shockwave meshes mid-detonation', anyVisible);
+    for (let t = 0; t < 80; t++) blast.update(1 / 60); // run past the longest layer (~0.9s+0.18 delay)
+    const allHidden = scene.children.every(o => !(o as THREE.Mesh).isMesh || !o.visible);
+    check('fx: blast finishes, goes idle, hides meshes', !blast.active && allHidden);
   }
 
   // ---------- Weapons: Orbital Blades ----------
