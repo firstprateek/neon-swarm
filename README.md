@@ -59,6 +59,7 @@ In **Free Play** you can change controls anytime. In a **Daily Challenge** you c
 - **Spatial hash grid** — rebuilt each frame with a counting sort (zero allocations), used for enemy separation, bullet collision, and contact damage.
 - **Adaptive quality governor** — holds the target frame rate (default 120 FPS) by flexing pixel-ratio and bloom tiers under load.
 - **WebGPU post-processing** — bloom via Three.js TSL nodes, with graceful fallback to plain rendering.
+- **GPU-only atmosphere** — the post-apocalyptic mood (sickly color grade folded into the bloom pass, gradient sky, fog, a procedural cracked-earth ground shader, drifting ash/embers) is fragment-shader + instancing work with **no extra lights or render passes**, and tiers down with the quality governor so it never costs the frame-rate target.
 - **Deterministic core** — gameplay randomness runs through a seeded `mulberry32` PRNG, so runs are reproducible (the foundation for daily seeds, shareable challenges, and future server-side anti-cheat). Cosmetic randomness (shake, particles) stays unseeded.
 
 ## Flags & debug
