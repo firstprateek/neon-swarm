@@ -1,5 +1,41 @@
 import * as THREE from 'three/webgpu';
+import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import type { SpatialGrid } from './spatial';
+
+/**
+ * Procedurally build a low-poly shambling humanoid from merged boxes — a clear
+ * zombie silhouette that costs about the same as the old icosahedron and, as
+ * ONE merged BufferGeometry, drops straight into the single-InstancedMesh horde
+ * (one draw call preserved). Authored vertically centered (feet ≈ y -0.5, head
+ * ≈ +0.5, ~1.0 tall) so the existing `m[o+13] = r*pulse` lift plants the feet on
+ * the ground for every type (radius = scale*0.5 across all ENEMY_TYPES).
+ */
+function buildZombieGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const box = (w: number, h: number, d: number, rx: number, x: number, y: number, z: number) => {
+    const g = new THREE.BoxGeometry(w, h, d);
+    if (rx) g.rotateX(rx);
+    g.translate(x, y, z);
+    parts.push(g);
+  };
+  // legs — frozen mid-stride (one forward, one back) so the static mesh reads as walking
+  box(0.11, 0.40, 0.13, 0, 0.07, -0.30, 0.05);
+  box(0.11, 0.40, 0.13, 0, -0.07, -0.30, -0.05);
+  // hips
+  box(0.30, 0.16, 0.18, 0, 0, -0.14, 0);
+  // torso — hunched forward
+  box(0.34, 0.42, 0.20, 0.21, 0, 0.07, 0.02);
+  // arms — reaching out ahead (classic shamble), slightly asymmetric
+  box(0.09, 0.34, 0.10, 0.96, 0.21, 0.12, 0.12);
+  box(0.09, 0.34, 0.10, 1.05, -0.21, 0.14, 0.12);
+  // head — lolling forward/down
+  box(0.20, 0.20, 0.20, 0.26, 0, 0.36, 0.07);
+
+  const merged = BufferGeometryUtils.mergeGeometries(parts, false);
+  parts.forEach(p => p.dispose());
+  merged.computeVertexNormals();
+  return merged;
+}
 
 export interface EnemyType {
   hp: number;
@@ -11,12 +47,15 @@ export interface EnemyType {
   color: THREE.Color;
 }
 
+// Apocalypse palette: rotten flesh-greens, bruised purples, bile, and a
+// radioactive boss. Muted/desaturated so only the player, tracers and the
+// mutant boss glow under the warm-dark fog.
 export const ENEMY_TYPES: EnemyType[] = [
-  { hp: 3,    speed: 7,    radius: 0.5,  dps: 8,  xp: 1,   scale: 1.0,  color: new THREE.Color(0xff3355) },
-  { hp: 2,    speed: 11.5, radius: 0.38, dps: 6,  xp: 2,   scale: 0.76, color: new THREE.Color(0xff8822) },
-  { hp: 28,   speed: 3.6,  radius: 1.1,  dps: 18, xp: 8,   scale: 2.2,  color: new THREE.Color(0xaa33ff) },
-  { hp: 130,  speed: 5,    radius: 1.6,  dps: 30, xp: 30,  scale: 3.2,  color: new THREE.Color(0xffee33) },
-  { hp: 1500, speed: 3.1,  radius: 3.4,  dps: 45, xp: 220, scale: 6.8,  color: new THREE.Color(0xff44ff) }, // boss
+  { hp: 3,    speed: 7,    radius: 0.5,  dps: 8,  xp: 1,   scale: 1.0,  color: new THREE.Color(0xaec47e) }, // shambler (rotten grey-green)
+  { hp: 2,    speed: 11.5, radius: 0.38, dps: 6,  xp: 2,   scale: 0.76, color: new THREE.Color(0xd6dba0) }, // runner (pallid, brighter)
+  { hp: 28,   speed: 3.6,  radius: 1.1,  dps: 18, xp: 8,   scale: 2.2,  color: new THREE.Color(0xa98fc4) }, // brute (purple-bruise)
+  { hp: 130,  speed: 5,    radius: 1.6,  dps: 30, xp: 30,  scale: 3.2,  color: new THREE.Color(0xd8e46a) }, // heavy (bile/acid)
+  { hp: 1500, speed: 3.1,  radius: 3.4,  dps: 45, xp: 220, scale: 6.8,  color: new THREE.Color(0x9bff52) }, // BOSS (radioactive mutant)
 ];
 
 /** index into ENEMY_TYPES for the boss */
@@ -84,11 +123,12 @@ export class Swarm {
     this.age = new Float32Array(max);
     this.baseScale = new Float32Array(max);
 
-    const geo = new THREE.IcosahedronGeometry(0.5, 0);
+    // procedural low-poly zombie, shared across all 20k instances (1 draw call)
+    const geo = buildZombieGeometry();
     // Lambert (diffuse-only) instead of Standard (full PBR): the swarm is the
     // fragment-overdraw bottleneck when the horde fills the screen — hundreds of
     // instances overlap per pixel, each running the fragment shader. These tiny
-    // flat-shaded blobs don't need PBR; Lambert shades far cheaper per fragment.
+    // flat-shaded figures don't need PBR; Lambert shades far cheaper per fragment.
     const mat = new THREE.MeshLambertMaterial({ flatShading: true });
     this.mesh = new THREE.InstancedMesh(geo, mat, max);
     this.mesh.frustumCulled = false;
@@ -131,7 +171,8 @@ export class Swarm {
     m[o + 15] = 1;
 
     const col = this.mesh.instanceColor!.array as Float32Array;
-    const v = 0.85 + Math.random() * 0.3;
+    // boss biased bright so its radioactive tint exceeds the bloom threshold and glows
+    const v = (typeIdx === BOSS_TYPE ? 1.5 : 0.85) + Math.random() * 0.3;
     const cr = Math.min(1, t.color.r * v), cg = Math.min(1, t.color.g * v), cb = Math.min(1, t.color.b * v);
     col[i * 3] = this.baseCol[i * 3] = cr;
     col[i * 3 + 1] = this.baseCol[i * 3 + 1] = cg;

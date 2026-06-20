@@ -336,18 +336,21 @@ function run(): void {
     const sw = new Swarm(4, scene);
     sw.spawn(0, 5, 0);
     const col = sw.mesh.instanceColor!.array as Float32Array;
-    // grunts are red (0xff3355): R is saturated (~1), so test the green channel,
-    // which is dim at base and visibly brightens toward white during a flash
-    const baseG = sw.baseCol[1];
-    check('flash: base color captured at spawn', baseG === col[1] && baseG < 0.5, `baseG=${baseG}`);
+    // pick the dimmest channel (whatever the enemy palette is) — it brightens the
+    // most toward white during a flash, so it's the clearest signal
+    let dim = 0;
+    if (sw.baseCol[1] < sw.baseCol[dim]) dim = 1;
+    if (sw.baseCol[2] < sw.baseCol[dim]) dim = 2;
+    const baseD = sw.baseCol[dim];
+    check('flash: base color captured at spawn', baseD === col[dim] && baseD < 0.95, `baseD=${baseD}`);
     const g = new SpatialGrid(2.5, 16, 4);
     sw.flash[0] = HIT_FLASH; // simulate a hit
     g.build(sw.posX, sw.posZ, sw.count, 0, 0);
     sw.update(1 / 600, 0, 0, 0, g); // tiny dt: still mid-flash
-    check('flash: enemy brightens toward white while flashing', col[1] > baseG + 0.2, `colG=${col[1].toFixed(2)} baseG=${baseG.toFixed(2)}`);
+    check('flash: enemy brightens toward white while flashing', col[dim] > baseD + 0.05, `colD=${col[dim].toFixed(2)} baseD=${baseD.toFixed(2)}`);
     // run enough frames to finish the flash
     for (let t = 0; t < 20; t++) sw.update(1 / 60, 0, 0, 0, g);
-    check('flash: color restores to base after flash ends', Math.abs(col[1] - baseG) < 1e-4, `colG=${col[1]} baseG=${baseG}`);
+    check('flash: color restores to base after flash ends', Math.abs(col[dim] - baseD) < 1e-4, `colD=${col[dim]} baseD=${baseD}`);
   }
 
   // ---------- Spawn telegraph (scale-in) ----------

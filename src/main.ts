@@ -94,28 +94,31 @@ async function start() {
   app.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x05060a);
-  scene.fog = new THREE.FogExp2(0x05060a, 0.02);
+  // warm-dark toxic dusk
+  scene.background = new THREE.Color(0x0c0a07);
+  scene.fog = new THREE.FogExp2(0x0c0a07, 0.02);
 
   const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 300);
   camera.position.set(0, 26, 15);
   camera.lookAt(0, 0, 0);
 
-  // neutral lights so instance colors read true (tinted lights wash the palette out)
-  scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-  const dir = new THREE.DirectionalLight(0xffffff, 1.1);
+  // neutral lights so instance colors read true (tinted lights wash the palette
+  // out). Ambient kept high so the muted apocalypse horde stays readable against
+  // the dark ground even away from the player's glow.
+  scene.add(new THREE.AmbientLight(0xffffff, 0.95));
+  const dir = new THREE.DirectionalLight(0xffffff, 1.0);
   dir.position.set(20, 40, 10);
   scene.add(dir);
 
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(1200, 1200),
-    new THREE.MeshStandardMaterial({ color: 0x0a0d16, roughness: 1 })
+    new THREE.MeshStandardMaterial({ color: 0x14110c, roughness: 1 }) // cracked earth
   );
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.03;
   scene.add(ground);
 
-  const gridHelper = new THREE.GridHelper(1200, 240, 0x1a3a4a, 0x0e1c28);
+  const gridHelper = new THREE.GridHelper(1200, 240, 0x2a2418, 0x171208); // ruined-pavement amber-brown
   scene.add(gridHelper);
 
   // --- player ---
@@ -134,7 +137,7 @@ async function start() {
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.1;
   player.add(ring);
-  const glow = new THREE.PointLight(0x55ffee, 220, 30, 1.8);
+  const glow = new THREE.PointLight(0x55ffee, 70, 26, 1.8);
   glow.position.y = 3;
   player.add(glow);
   scene.add(player);
