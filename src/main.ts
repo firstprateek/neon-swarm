@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
-import { pass } from 'three/tsl';
+import { pass, uniform, mix, vec3, screenUV, luminance, clamp, oneMinus,
+  Fn, positionWorld, color, smoothstep, mx_fractal_noise_float, mx_noise_float } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { createState, grantXp, rollUpgrades, registerKill, tickCombo, UPGRADES,
   MISSILE_MAX, NUKE_MAX, MISSILE_REFILL, MISSILE_DMG, MISSILE_AOE, NUKE_DMG } from './state';
@@ -46,6 +47,9 @@ async function presentsBlack(
 ): Promise<boolean> {
   const prevBg = scene.background;
   const prevFog = scene.fog;
+  const sNode = scene as unknown as { backgroundNode: unknown };
+  const prevBgNode = sNode.backgroundNode;
+  sNode.backgroundNode = null; // the magenta probe must own the clear, not the gradient node
   scene.background = new THREE.Color(0xff00ff);
   scene.fog = null;
   const sample = (): number => {
@@ -78,6 +82,7 @@ async function presentsBlack(
   }
   scene.background = prevBg;
   scene.fog = prevFog;
+  sNode.backgroundNode = prevBgNode;
   return sum === 0;
 }
 
@@ -115,9 +120,17 @@ async function start() {
   app.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  // warm-dark toxic dusk
-  scene.background = new THREE.Color(0x0c0a07);
-  scene.fog = new THREE.FogExp2(0x0c0a07, 0.02);
+  // post-apocalyptic sky: ashen warm horizon -> toxic dark zenith, fog tinted to the
+  // horizon so the far ground dissolves into the haze (no seam). Cheap GPU gradient
+  // (only a thin top band shows under the steep top-down cam — a dome would be wasted).
+  const SKY_HORIZON = 0x1a1410, SKY_ZENITH = 0x0a0c08;
+  (scene as unknown as { backgroundNode: unknown }).backgroundNode = mix(
+    vec3(...new THREE.Color(SKY_HORIZON).toArray()),
+    vec3(...new THREE.Color(SKY_ZENITH).toArray()),
+    screenUV.y.smoothstep(0.35, 1.0),
+  );
+  scene.background = null;
+  scene.fog = new THREE.FogExp2(SKY_HORIZON, 0.026);
 
   const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 300);
   camera.position.set(0, 26, 15);
@@ -131,16 +144,39 @@ async function start() {
   dir.position.set(20, 40, 10);
   scene.add(dir);
 
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(1200, 1200),
-    new THREE.MeshStandardMaterial({ color: 0x14110c, roughness: 1 }) // cracked earth
-  );
+  // procedural wasteland ground (TSL): low-freq dust/scorch mottle, Worley "ruined
+  // pavement" crack seams (replaces the GridHelper), and detail blood/scorch splotches
+  // gated by uDetail so they tier off cheaply. All luminance < 0.13 -> never blooms.
+  const uDetail = uniform(1.0); // 1 full · 0.5 cracks-only · 0 base (set in applyQuality)
+  let groundMat: THREE.Material;
+  try {
+    const groundColor = Fn(() => {
+      const p = positionWorld.xz;
+      // broad dust <-> dusty-tan mottle (wide palette so cracked earth actually reads)
+      const mott = mx_fractal_noise_float(p.mul(0.05), 4, 2.0, 0.5).mul(0.5).add(0.5);
+      const base = mix(color(0x141009), color(0x352a18), mott);
+      // crack network: near-black lines along a mid-freq noise's zero-crossings
+      // (mx_noise_float — identical on WebGPU + WebGL2, unlike worley)
+      const crack = smoothstep(0.09, 0.0, mx_noise_float(p.mul(0.3)).abs());
+      const seamed = mix(base, color(0x080503), crack);
+      // broad dried-blood + scorch splotches, tiered off cheaply by uDetail
+      const splotch = mx_fractal_noise_float(p.mul(0.013), 3, 2.0, 0.5).mul(0.5).add(0.5);
+      const blood = smoothstep(0.66, 0.82, splotch).mul(uDetail);
+      const bloodied = mix(seamed, color(0x3a140f), blood.mul(0.7));     // dried maroon
+      const scorch = smoothstep(0.22, 0.04, splotch).mul(uDetail);
+      return mix(bloodied, color(0x0a0604), scorch.mul(0.6));            // char / burn
+    });
+    const m = new THREE.MeshStandardNodeMaterial({ roughness: 1.0, metalness: 0.0 });
+    m.colorNode = groundColor();
+    groundMat = m;
+  } catch (err) {
+    console.warn('[neon-swarm] procedural ground unavailable, using flat:', err);
+    groundMat = new THREE.MeshStandardMaterial({ color: 0x14110c, roughness: 1 });
+  }
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1200), groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.03;
   scene.add(ground);
-
-  const gridHelper = new THREE.GridHelper(1200, 240, 0x2a2418, 0x171208); // ruined-pavement amber-brown
-  scene.add(gridHelper);
 
   // --- player: a procedural human survivor (swappable avatar) ---
   const player = new THREE.Group();
@@ -198,7 +234,8 @@ async function start() {
   const tesla = new Tesla(64, scene);
   const grid = new SpatialGrid(2.5, 96, MAX_ENEMIES);
 
-  // --- post-processing bloom, validated before use ---
+  // --- post-processing bloom + post-apoc color grade, validated before use ---
+  const gradeAmt = uniform(1.0); // tiered in applyQuality(): 1 ultra/high · 0.6 med · 0 low
   let post: { render: () => void } | null = null;
   if (!noBloom) {
     try {
@@ -207,7 +244,15 @@ async function start() {
       const color = scenePass.getTextureNode('output');
       // threshold 0.75: only emissive/bright-basic surfaces bloom (player,
       // bullets, gems) — lower thresholds wash the whole horde out
-      postProcessing.outputNode = color.add(bloom(color, 0.55, 0.35, 0.75));
+      const lit = color.add(bloom(color, 0.55, 0.35, 0.75)); // BLOOM FIRST — keep neon glows hot
+      // grade AFTER bloom: sickly split-tone (cold-teal shadows, sodium-ash highlights)
+      // + mild desaturation + a gentle vignette. Luminance-preserving so the horde still pops.
+      const lum = luminance(lit.rgb);
+      const split = lit.rgb.add(mix(vec3(0.035, 0.065, 0.055), vec3(0.17, 0.115, 0.05), lum.smoothstep(0.15, 0.85)));
+      const desat = mix(vec3(lum), split, 0.82);
+      const vUV = screenUV.sub(0.5);
+      const vig = clamp(oneMinus(vUV.dot(vUV).mul(0.9)), 0.55, 1.0);
+      postProcessing.outputNode = mix(lit.rgb, desat.mul(vig), gradeAmt);
       const pp = postProcessing as unknown as { render: () => void; renderAsync?: () => Promise<void> };
       const black = await presentsBlack(renderer.domElement, scene, () => (pp.renderAsync ? pp.renderAsync() : pp.render()));
       if (black) {
@@ -240,6 +285,9 @@ async function start() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, dprCap(tq.pixelRatioCap)));
     renderer.setSize(w, h);
     bloomEnabled = bloomAllowed && tq.bloom && !!post;
+    // atmosphere tiers DOWN with the governor so the 120fps target always wins
+    gradeAmt.value = quality.tier <= 1 ? 1.0 : quality.tier === 2 ? 0.6 : 0.0;
+    uDetail.value = quality.tier <= 1 ? 1.0 : quality.tier === 2 ? 0.5 : 0.0;
     const gov = pinnedTier >= 0 ? 'fixed' : `${targetFps}fps target`;
     hud.setBackend(`${onWebGPU() ? 'WebGPU' : 'WebGL2'}${backendNote} · ${gov} · quality: ${tq.label}${bloomEnabled ? '' : ' (no bloom)'}`);
   }
