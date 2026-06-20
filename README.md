@@ -30,6 +30,8 @@ Pick **☀ Daily Challenge** or **▶ Free Play**, choose a survivor, then survi
 
 Collect green XP gems, pick an upgrade on each level-up, and push your score. Bigger enemies are worth more; chaining kills builds a score **combo** multiplier. Bosses arrive on a timer and drop ammo restocks.
 
+**On mobile/touch** (auto-detected): a floating analog joystick on the bottom-right moves you (push further = faster), and three ability buttons on the bottom-left fire **nuke / missile / dash**. Weapons still auto-fire. Add `?touch` to force the on-screen controls on a desktop browser.
+
 ## Game modes & the share loop
 
 - **☀ Daily Challenge** — one global seed per UTC day (everyone on Earth plays the *identical* run), with a local per-day personal best. Score is skill, not luck.
@@ -56,6 +58,7 @@ URL params (append e.g. `?webgl`):
 - `?fps=N` — set the governor's target frame rate (default 120)
 - `?quality=N` — pin a quality tier and disable the adaptive governor (`-1` = auto)
 - `?mute` — start muted
+- `?touch` — force-enable the on-screen touch controls (joystick + ability buttons) on a desktop browser
 
 Other:
 
@@ -70,7 +73,7 @@ The plan is a Wordle-style viral loop with global leaderboards, built in phases:
 - ✅ **Phase 0 — Determinism.** Seeded sim, proven byte-identical replays.
 - ✅ **Phase 1 — Share card + challenge links.** Zero-backend brag card and `?seed` "beat my run" links.
 - ✅ **Phase 2a — Daily Challenge.** One global seed/day with a local best board.
-- ⏳ **Phase 2b — Global leaderboard + telemetry.** Self-hosted backend (PocketBase on a Mac Mini behind a Cloudflare Tunnel) with statistical anti-cheat and privacy-first, cookieless analytics. Full design: [`docs/BACKEND.md`](docs/BACKEND.md).
+- ⏳ **Phase 2b — Global leaderboard + telemetry.** Self-hosted backend (PocketBase on a Mac Mini behind a Cloudflare Tunnel) with statistical anti-cheat and privacy-first, cookieless analytics. The post-game **feedback** widget already captures submissions and queues them locally to flush here once it's live. Full design: [`docs/BACKEND.md`](docs/BACKEND.md).
 - ⏳ **Phase 3 — Last Swarm Standing.** Real-time multiplayer (only a light player ribbon is networked; each client simulates its own horde from the shared seed).
 
 ## Ideas for later

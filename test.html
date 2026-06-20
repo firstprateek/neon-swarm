@@ -49,6 +49,15 @@
       <div id="start-hint"></div>
     </div>
     <div id="levelup-overlay" class="overlay hidden"><div class="cards" id="cards"></div></div>
+    <div id="touch-layer">
+      <div id="tc-stick-zone"></div>
+      <div id="tc-stick"><div id="tc-stick-knob"></div></div>
+      <div id="tc-abilities">
+        <button id="tc-dash" class="tc-btn">⟫</button>
+        <button id="tc-missile" class="tc-btn">🚀<span class="tc-ct" id="tc-missile-ct"></span></button>
+        <button id="tc-nuke" class="tc-btn">☢<span class="tc-ct" id="tc-nuke-ct"></span></button>
+      </div>
+    </div>
     <div id="gameover-overlay" class="overlay hidden">
       <div id="brag-label"></div>
       <div id="brag-score"></div>
@@ -56,7 +65,20 @@
       <div id="brag-daily" class="hidden"></div>
       <div id="go-stats"></div>
       <div id="brag-seed"></div>
+      <div id="feedback-panel" class="hidden">
+        <div class="fb-emoji">
+          <button data-r="1"></button><button data-r="2"></button><button data-r="3"></button>
+          <button data-r="4"></button><button data-r="5"></button>
+        </div>
+        <div class="fb-cats">
+          <button data-c="bug"></button><button data-c="too_hard"></button>
+          <button data-c="idea"></button><button data-c="other"></button>
+        </div>
+        <textarea id="fb-text"></textarea>
+        <button id="fb-send"></button>
+      </div>
       <button id="share-btn"></button>
+      <button id="feedback-btn"></button>
       <button id="restart-btn"></button>
     </div>
     <div id="pause-overlay" class="overlay hidden"></div>

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>NEON SWARM</title>
   <style>
     :root {
@@ -13,9 +13,14 @@
       --panel: rgba(8, 12, 20, 0.88);
     }
     * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; overflow: hidden; background: #05060a; }
+    html, body {
+      margin: 0; padding: 0; overflow: hidden; background: #05060a;
+      touch-action: none; overscroll-behavior: none;
+      -webkit-user-select: none; user-select: none;
+      width: 100%; height: 100dvh;
+    }
     body { font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, monospace; color: #cfeef5; }
-    canvas { position: fixed; inset: 0; display: block; }
+    canvas { position: fixed; inset: 0; display: block; height: 100dvh; }
 
     #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
 
@@ -42,11 +47,67 @@
     #flash { position: absolute; inset: 0; background: #fff; opacity: 0; }
     #flash.hidden { display: none; }
 
-    #abilities { position: absolute; bottom: 14px; left: 16px; font-size: 13px; letter-spacing: 1px; line-height: 1.8; }
+    #abilities { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 18px; font-size: 13px; letter-spacing: 1px; text-align: center; }
     #abilities .ab { color: #6a8a96; }
     #abilities .ab b { color: var(--accent); }
     #abilities .ab.ready b { color: #44ff99; }
     #abilities .ab.empty b { color: #ff5566; }
+    body.touch #abilities { display: none; } /* on-screen buttons carry their own badges */
+
+    /* ---- mobile touch layer (between HUD z=10 and overlays z=20) ---- */
+    #touch-layer { position: fixed; inset: 0; z-index: 15; pointer-events: none; touch-action: none; display: none; }
+    #touch-layer.active { display: block; }
+    /* floating movement stick — bottom RIGHT (spawns at touch point; JS sets left/top) */
+    #tc-stick { position: absolute; width: 132px; height: 132px; border-radius: 50%;
+      border: 2px solid rgba(94,242,255,0.35); background: rgba(94,242,255,0.06);
+      transform: translate(-50%, -50%); opacity: 0; pointer-events: none;
+      transition: opacity 0.12s; will-change: left, top; }
+    #tc-stick.live { opacity: 0.5; }
+    #tc-stick-knob { position: absolute; left: 50%; top: 50%;
+      width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%;
+      background: rgba(94,242,255,0.85); box-shadow: 0 0 18px rgba(94,242,255,0.6); will-change: transform; }
+    #tc-stick-zone { position: absolute; right: 0; bottom: 0; width: 55%; height: 60%; pointer-events: auto; touch-action: none; }
+    /* ability buttons — bottom LEFT, thumb-arc (dash easiest at the bottom) */
+    #tc-abilities { position: absolute;
+      left: max(18px, env(safe-area-inset-left));
+      bottom: max(20px, env(safe-area-inset-bottom));
+      display: flex; flex-direction: column-reverse; gap: 14px; pointer-events: none; }
+    .tc-btn { position: relative; width: 72px; height: 72px; border-radius: 50%;
+      border: 2px solid var(--accent); background: rgba(8,14,20,0.6);
+      -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+      color: var(--accent); font: inherit; font-size: 26px;
+      display: flex; align-items: center; justify-content: center;
+      pointer-events: auto; touch-action: none; opacity: 0.9; }
+    .tc-btn:nth-child(2) { margin-left: 10px; }
+    .tc-btn:nth-child(3) { margin-left: 20px; }
+    .tc-btn#tc-nuke { border-color: #ffd24a; color: #ffd24a; }
+    .tc-btn.down { transform: scale(0.92); box-shadow: 0 0 22px currentColor; }
+    .tc-btn.tc-empty { opacity: 0.32; border-color: #ff5566; color: #ff5566; }
+    .tc-btn .tc-ct { position: absolute; right: 2px; bottom: 0; font-size: 12px; color: #44ff99; text-shadow: 0 0 4px #000; }
+    .tc-btn.tc-empty .tc-ct { color: #ff5566; }
+
+    /* ---- feedback panel (inside game-over overlay) ---- */
+    #feedback-panel { width: 340px; max-width: 88vw; margin-top: 4px; padding: 16px 18px;
+      background: rgba(8,12,20,0.92); border: 1px solid rgba(94,242,255,0.35);
+      display: flex; flex-direction: column; gap: 12px; text-align: center; }
+    #feedback-panel.hidden { display: none; }
+    .fb-q { font-size: 14px; letter-spacing: 3px; color: #eaffff; }
+    .fb-emoji { display: flex; justify-content: center; gap: 6px; }
+    .fb-emoji button { width: 52px; height: 52px; font-size: 26px; background: transparent;
+      border: 1px solid rgba(94,242,255,0.25); border-radius: 10px; cursor: pointer; }
+    .fb-emoji button:hover, .fb-emoji button.sel { border-color: var(--accent); box-shadow: 0 0 14px rgba(94,242,255,0.4); }
+    .fb-cats { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+    .fb-cats button { font-family: inherit; font-size: 11px; letter-spacing: 1px;
+      padding: 6px 10px; background: transparent; color: #a8ccd6;
+      border: 1px solid rgba(94,242,255,0.25); cursor: pointer; }
+    .fb-cats button.sel { color: var(--accent); border-color: var(--accent); }
+    #fb-text { font-family: inherit; font-size: 16px; /* >=16px so iOS won't zoom on focus */
+      background: rgba(0,0,0,0.4); color: #cfeef5; border: 1px solid var(--accent-dim); padding: 8px; resize: none; }
+    #fb-send { padding: 10px 28px; font-family: inherit; font-size: 14px; letter-spacing: 3px;
+      background: transparent; color: var(--accent); border: 1px solid var(--accent); cursor: pointer; }
+    .fb-note { font-size: 10px; letter-spacing: 1px; color: #5f8a96; line-height: 1.5; }
+    .fb-thanks { font-size: 16px; letter-spacing: 2px; color: #44ff99; text-shadow: 0 0 12px #22cc77; }
 
     .overlay {
       position: absolute; inset: 0; display: flex; flex-direction: column;
@@ -167,6 +228,16 @@
     <div id="vignette"></div>
   </div>
 
+  <div id="touch-layer">
+    <div id="tc-stick-zone"></div>
+    <div id="tc-stick"><div id="tc-stick-knob"></div></div>
+    <div id="tc-abilities">
+      <button id="tc-dash"    class="tc-btn" aria-label="Dash">⟫</button>
+      <button id="tc-missile" class="tc-btn" aria-label="Missile">🚀<span class="tc-ct" id="tc-missile-ct">3</span></button>
+      <button id="tc-nuke"    class="tc-btn" aria-label="Nuke">☢<span class="tc-ct" id="tc-nuke-ct">1</span></button>
+    </div>
+  </div>
+
   <div id="start-overlay" class="overlay">
     <div class="title">NEON SWARM</div>
     <div class="subtitle">WASD / ARROWS TO MOVE &nbsp;·&nbsp; WEAPONS AUTO-FIRE &nbsp;·&nbsp; SURVIVE</div>
@@ -204,8 +275,26 @@
       <div class="brag-grid" id="go-stats"></div>
       <div class="brag-seed" id="brag-seed"></div>
     </div>
+    <div id="feedback-panel" class="hidden">
+      <div class="fb-q">HOW WAS THAT RUN?</div>
+      <div class="fb-emoji">
+        <button data-r="1" aria-label="hated it">😡</button>
+        <button data-r="2" aria-label="meh">😕</button>
+        <button data-r="3" aria-label="ok">😐</button>
+        <button data-r="4" aria-label="good">🙂</button>
+        <button data-r="5" aria-label="loved it">🤩</button>
+      </div>
+      <div class="fb-cats">
+        <button data-c="bug">🐞 BUG</button><button data-c="too_hard">🔥 TOO HARD</button>
+        <button data-c="idea">💡 IDEA</button><button data-c="other">… OTHER</button>
+      </div>
+      <textarea id="fb-text" maxlength="280" rows="2" enterkeyhint="send" placeholder="Anything else? (optional)"></textarea>
+      <button id="fb-send">SEND</button>
+      <div class="fb-note">Anonymous · no account · no tracking · stored on the dev's own server</div>
+    </div>
     <div class="pause-buttons">
       <button id="share-btn">⚔ CHALLENGE A FRIEND</button>
+      <button id="feedback-btn">💬 LEAVE FEEDBACK</button>
       <button id="restart-btn">RESTART</button>
     </div>
   </div>

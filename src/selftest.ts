@@ -17,7 +17,9 @@ import * as sfx from './sfx';
 import { defaultSettings, mergeSettings, qualityTier } from './settings';
 import { AVATARS, makeSurvivor } from './avatars';
 import { createState, grantXp, xpForLevel, rollUpgrades, registerKill, tickCombo, comboMultiplier, SCORE_BY_TYPE, UPGRADES } from './state';
-import { getMove } from './input';
+import { getMove, setTouchMove, clearTouchMove } from './input';
+import { createTouch } from './touch';
+import { submitFeedback, pendingFeedback, type FeedbackCtx } from './feedback';
 import * as hud from './hud';
 
 interface Result { name: string; pass: boolean; detail: string }
@@ -269,6 +271,57 @@ function run(): void {
     for (let t = 0; t < 80; t++) blast.update(1 / 60); // run past the longest layer (~0.9s+0.18 delay)
     const allHidden = scene.children.every(o => !(o as THREE.Mesh).isMesh || !o.visible);
     check('fx: blast finishes, goes idle, hides meshes', !blast.active && allHidden);
+  }
+
+  // ---------- Input: analog touch override ----------
+  {
+    setTouchMove(0.5, 0);
+    const m = { ...getMove() };
+    check('input: touch overrides keyboard with analog magnitude', m.x === 0.5 && m.z === 0, JSON.stringify(m));
+    setTouchMove(3, 4); // length 5 -> clamps to (0.6, 0.8)
+    const c = { ...getMove() };
+    check('input: touch vector clamped to length 1', Math.abs(Math.hypot(c.x, c.z) - 1) < 1e-6, JSON.stringify(c));
+    clearTouchMove();
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW' }));
+    const k = { ...getMove() };
+    check('input: clearTouchMove restores keyboard path', k.x === 0 && k.z === -1, JSON.stringify(k));
+    window.dispatchEvent(new Event('blur'));
+  }
+
+  // ---------- Touch controls ----------
+  {
+    let m = 0, n = 0, d = 0;
+    const tc = createTouch({ fireMissile: () => m++, fireNuke: () => n++, doDash: () => d++, canAct: () => true });
+    document.getElementById('tc-missile')!.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 9, bubbles: true }));
+    check('touch: missile button fires the closure once', m === 1, String(m));
+    tc.show();
+    check('touch: show() activates the layer', document.getElementById('touch-layer')!.classList.contains('active'));
+    setTouchMove(0.4, 0.4);
+    tc.hide();
+    check('touch: hide() clears the move vector', getMove().x === 0 && getMove().z === 0);
+    tc.setAbilityState(0, 0, false);
+    check('touch: empty state marks all three buttons',
+      document.getElementById('tc-missile')!.classList.contains('tc-empty') &&
+      document.getElementById('tc-nuke')!.classList.contains('tc-empty') &&
+      document.getElementById('tc-dash')!.classList.contains('tc-empty'));
+  }
+
+  // ---------- Feedback queue ----------
+  {
+    localStorage.removeItem('ns-feedback-queue');
+    const ctx = {
+      appVersion: '0.1.0', backend: 'webgl2', deviceClass: 'mobile', viewport: '390x844',
+      dpr: 3, mode: 'free', dailyNum: null, seed: 42, survivor: 'VEX', score: 100, timeS: 30,
+      level: 3, kills: 50, comboPeak: 7,
+    } as FeedbackCtx;
+    submitFeedback({ rating: 4, category: 'bug', text: 'x'.repeat(400) }, ctx);
+    const q = pendingFeedback();
+    check('feedback: submit queues one anonymous item', q.length === 1 && q[0].rating === 4 && q[0].ctx.seed === 42, String(q.length));
+    check('feedback: text capped at 280, no PII fields',
+      q[0].text.length === 280 && !('ua' in (q[0] as unknown as Record<string, unknown>)) && !('userAgent' in (q[0].ctx as unknown as Record<string, unknown>)));
+    for (let i = 0; i < 60; i++) submitFeedback({ rating: 3, category: null, text: '' }, ctx);
+    check('feedback: queue capped at 50 (drop-oldest)', pendingFeedback().length === 50, String(pendingFeedback().length));
+    localStorage.removeItem('ns-feedback-queue');
   }
 
   // ---------- Weapons: Orbital Blades ----------

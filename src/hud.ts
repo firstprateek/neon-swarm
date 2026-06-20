@@ -1,4 +1,5 @@
 import type { GameState, Upgrade } from './state';
+import type { FeedbackInput, Rating, Category } from './feedback';
 
 function el<T extends HTMLElement = HTMLElement>(id: string): T {
   return document.getElementById(id) as T;
@@ -381,6 +382,8 @@ export interface RunInfo {
   shareUrl: string;
   /** present when the run was today's Daily Challenge */
   daily?: { num: number; best: number; isBest: boolean } | null;
+  /** receives a feedback submission from the game-over panel */
+  onFeedback?: (input: FeedbackInput) => void;
 }
 
 export function showGameOver(state: GameState, info: RunInfo): void {
@@ -430,5 +433,31 @@ export function showGameOver(state: GameState, info: RunInfo): void {
     }
   };
   el<HTMLButtonElement>('restart-btn').onclick = () => location.reload();
+
+  // feedback: one-tap emoji is a complete submit; SEND covers category/text-only.
+  // Shown once per game-over, never nags, never gates restart.
+  const fbBtn = el<HTMLButtonElement>('feedback-btn');
+  const panel = el('feedback-panel');
+  panel.className = 'hidden';
+  let rating: Rating = null, category: Category = null, submitted = false;
+  const selGroup = (group: string, attr: string, val: string) => {
+    panel.querySelectorAll<HTMLButtonElement>(`.${group} button`).forEach(b =>
+      b.classList.toggle('sel', b.getAttribute(attr) === val));
+  };
+  const send = (r: Rating) => {
+    if (submitted) return;
+    submitted = true;
+    const text = el<HTMLTextAreaElement>('fb-text').value;
+    info.onFeedback?.({ rating: r, category, text });
+    panel.innerHTML = '<div class="fb-thanks">✓ THANKS — that helps a lot</div>';
+  };
+  fbBtn.style.display = '';
+  fbBtn.onclick = () => { fbBtn.style.display = 'none'; panel.classList.remove('hidden'); };
+  panel.querySelectorAll<HTMLButtonElement>('.fb-emoji button').forEach(b =>
+    b.onclick = () => { rating = Number(b.dataset.r) as Rating; selGroup('fb-emoji', 'data-r', b.dataset.r!); send(rating); });
+  panel.querySelectorAll<HTMLButtonElement>('.fb-cats button').forEach(b =>
+    b.onclick = () => { category = b.dataset.c as Category; selGroup('fb-cats', 'data-c', b.dataset.c!); });
+  el<HTMLButtonElement>('fb-send').onclick = () => send(rating);
+
   gameoverOverlay.classList.remove('hidden');
 }

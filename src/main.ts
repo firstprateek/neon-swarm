@@ -3,7 +3,9 @@ import { pass } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { createState, grantXp, rollUpgrades, registerKill, tickCombo, UPGRADES,
   MISSILE_MAX, NUKE_MAX, MISSILE_REFILL, MISSILE_DMG, MISSILE_AOE, NUKE_DMG } from './state';
-import { getMove } from './input';
+import { getMove, setTouchMove, clearTouchMove } from './input';
+import { createTouch } from './touch';
+import { submitFeedback, flushFeedback, beaconFlush, deviceClass, APP_VERSION, type FeedbackCtx } from './feedback';
 import { SpatialGrid } from './spatial';
 import { Swarm, ENEMY_TYPES, BOSS_TYPE, HIT_FLASH } from './swarm';
 import { Bullets, Gems, Particles, Missiles } from './combat';
@@ -216,10 +218,21 @@ async function start() {
   const quality = createQuality(targetFrameMs);
   let bloomEnabled = !!post;
 
+  // touch device? enables on-screen controls, a tighter DPR ceiling, and visualViewport sizing
+  const isTouch = matchMedia('(pointer: coarse)').matches || params.has('touch');
+  if (isTouch) document.body.classList.add('touch'); // hides the keyboard-hint ability HUD
+  // a 3x-DPR phone renders far too many pixels before the governor reacts — cap it
+  const dprCap = (cap: number) => (isTouch ? Math.min(cap, 1.5) : cap);
+  const viewportWH = (): [number, number] => {
+    const vv = window.visualViewport;
+    return [vv?.width ?? window.innerWidth, vv?.height ?? window.innerHeight];
+  };
+
   function applyQuality(): void {
     const tq = QUALITY_TIERS[quality.tier];
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, tq.pixelRatioCap));
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    const [w, h] = viewportWH();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, dprCap(tq.pixelRatioCap)));
+    renderer.setSize(w, h);
     bloomEnabled = bloomAllowed && tq.bloom && !!post;
     const gov = pinnedTier >= 0 ? 'fixed' : `${targetFps}fps target`;
     hud.setBackend(`${onWebGPU() ? 'WebGPU' : 'WebGL2'}${backendNote} · ${gov} · quality: ${tq.label}${bloomEnabled ? '' : ' (no bloom)'}`);
@@ -227,18 +240,25 @@ async function start() {
   if (pinnedTier >= 0) quality.tier = pinnedTier;
   applyQuality();
 
-  window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
+  // size from visualViewport (handles the iOS dynamic toolbar) + the mobile DPR cap
+  function applySize(): void {
+    const [w, h] = viewportWH();
+    camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY_TIERS[quality.tier].pixelRatioCap));
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, dprCap(QUALITY_TIERS[quality.tier].pixelRatioCap)));
+    renderer.setSize(w, h);
+  }
+  window.addEventListener('resize', applySize);
+  window.addEventListener('orientationchange', () => requestAnimationFrame(() => requestAnimationFrame(applySize)));
+  window.visualViewport?.addEventListener('resize', applySize);
 
   // --- game flow ---
   let started = false;
   let over = false;
   let leveling = false;
   let paused = false;
+  // one source of truth for "input should act": shared by keys and touch buttons
+  const canAct = (): boolean => started && !over && !leveling && !paused;
   let godMode = false; // cheat: invincibility
   let shake = 0; // screen-shake magnitude, decays each frame
   const addShake = (a: number) => { shake = Math.min(2.2, shake + a); };
@@ -562,8 +582,11 @@ async function start() {
     sfx.sfxPickup();
   }
 
+  // on-screen touch controls (joystick + ability buttons), only on coarse-pointer devices
+  const touch = isTouch ? createTouch({ fireMissile, fireNuke, doDash, canAct }) : null;
+
   window.addEventListener('keydown', e => {
-    if (!started || over || leveling || paused) return;
+    if (!canAct()) return;
     if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) fireMissile(); }
     else if (e.code === 'KeyQ') { if (!e.repeat) fireNuke(); }
     else if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') { if (!e.repeat) doDash(); }
@@ -589,11 +612,26 @@ async function start() {
     hud.hideBoss();
     const newDailyBest = isDaily ? recordDailyScore(dailyNum, state.score) : false;
     const seed = getSeed();
+    // anonymous run context for feedback — no UA, no id, no geo (privacy ceiling)
+    const fbCtx: FeedbackCtx = {
+      appVersion: APP_VERSION,
+      backend: onWebGPU() ? 'webgpu' : 'webgl2',
+      deviceClass: deviceClass(),
+      viewport: `${innerWidth}x${innerHeight}`,
+      dpr: Math.round((devicePixelRatio || 1) * 10) / 10,
+      locale: navigator.language,
+      mode: isDaily ? 'daily' : 'free',
+      dailyNum: isDaily ? dailyNum : null,
+      seed, survivor: AVATARS[settings.avatar].name,
+      score: state.score, timeS: state.time | 0,
+      level: state.level, kills: state.kills, comboPeak: state.comboPeak,
+    };
     hud.showGameOver(state, {
       survivor: AVATARS[settings.avatar].name,
       seed,
       shareUrl: `${location.origin}${location.pathname}?seed=${seed}`,
       daily: isDaily ? { num: dailyNum, best: getDailyBest(dailyNum), isBest: newDailyBest } : null,
+      onFeedback: (input) => submitFeedback(input, fbCtx),
     });
   }
 
@@ -628,6 +666,7 @@ async function start() {
     hitStop: () => hitStop,
     missiles, fireMissile, fireNuke, doDash,
     blast, blastActive: () => blast.active,
+    touch, canAct, setTouchMove, clearTouchMove, getMove,
     dashReady: () => dashCd <= 0,
     iframes: () => iframes,
     seed: () => getSeed(),
@@ -647,6 +686,7 @@ async function start() {
         else if (over) particles.update(dt);
         blast.update(dt);
         hud.tick(dt);
+        if (touch) { if (canAct()) touch.show(); else touch.hide(); }
       }
       if (post && bloomEnabled) post.render();
       else renderer.render(scene, camera);
@@ -769,6 +809,7 @@ async function start() {
 
     updateBossBar(dt);
     hud.setAbilities(state.missiles, state.nukes, dashCd <= 0);
+    touch?.setAbilityState(state.missiles, state.nukes, dashCd <= 0);
     hud.update(state, swarm.count);
   }
 
@@ -802,10 +843,16 @@ async function start() {
     else if (over) particles.update(simDt); // let the death explosion play out
     blast.update(dt); // real-time so the nuke FX plays out through hit-stop / level-up
     hud.tick(dt);
+    if (touch) { if (canAct()) touch.show(); else touch.hide(); } // show only during active play
 
     if (post && bloomEnabled) post.render();
     else renderer.render(scene, camera);
   });
+
+  // feedback: flush any queued items (no-op until Phase 2b sets the endpoint),
+  // and try a last-ditch beacon when the tab closes (covers RESTART's reload)
+  flushFeedback();
+  window.addEventListener('pagehide', beaconFlush);
 }
 
 start().catch(err => {
