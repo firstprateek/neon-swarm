@@ -213,6 +213,7 @@ async function start() {
   let over = false;
   let leveling = false;
   let paused = false;
+  let godMode = false; // cheat: invincibility
   let shake = 0; // screen-shake magnitude, decays each frame
   const addShake = (a: number) => { shake = Math.min(2.2, shake + a); };
   let hitStop = 0; // brief slow-mo (seconds of real time) for impact on big events
@@ -234,6 +235,32 @@ async function start() {
   window.addEventListener('keydown', e => {
     if (e.code === 'KeyM') sfx.toggleMute();
     else if (e.code === 'Escape') togglePause();
+  });
+
+  // --- cheat codes: type the sequence anytime ---
+  const cheats: { code: string; effect: () => string }[] = [
+    { code: 'god', effect: () => { godMode = !godMode; return godMode ? 'GOD MODE ON' : 'GOD MODE OFF'; } },
+    { code: 'guns', effect: () => { state.dmg = 80; state.fireRate = 14; state.projectiles = 8; state.pierce = 6; state.bulletSpeed = 48; state.orbitalLevel = 5; state.teslaLevel = 5; return 'MAX WEAPONS'; } },
+    { code: 'tank', effect: () => { state.maxHp += 200; state.hp = state.maxHp; return '+200 MAX HP'; } },
+    { code: 'boss', effect: () => { spawnBoss(); return 'BOSS SUMMONED'; } },
+    { code: 'horde', effect: () => { for (let i = 0; i < 400; i++) { const a = Math.random() * Math.PI * 2, r = 18 + Math.random() * 40; swarm.spawn((Math.random() * BOSS_TYPE) | 0, player.position.x + Math.cos(a) * r, player.position.z + Math.sin(a) * r); } return 'HORDE SUMMONED'; } },
+    { code: 'rich', effect: () => { state.score += 10000; return '+10000 SCORE'; } },
+    { code: 'levelup', effect: () => { state.pendingLevels++; return 'LEVEL UP'; } },
+  ];
+  let cheatBuf = '';
+  function applyCheat(name: string): string | null {
+    const c = cheats.find(x => x.code === name);
+    if (!c) return null;
+    const msg = c.effect();
+    hud.toast('✓ ' + msg);
+    return msg;
+  }
+  window.addEventListener('keydown', e => {
+    if (e.key.length !== 1 || !/[a-z]/i.test(e.key)) return;
+    cheatBuf = (cheatBuf + e.key.toLowerCase()).slice(-16);
+    for (const c of cheats) {
+      if (cheatBuf.endsWith(c.code)) { applyCheat(c.code); cheatBuf = ''; break; }
+    }
   });
 
   // --- pause-menu settings controls ---
@@ -440,6 +467,8 @@ async function start() {
     bosses: () => ({ active: activeBosses, spawned: bossesSpawned }),
     flags: () => ({ started, over, leveling, paused }),
     togglePause,
+    applyCheat,
+    godMode: () => godMode,
     quality: () => ({ tier: quality.tier, label: QUALITY_TIERS[quality.tier].label, emaMs: +quality.emaMs.toFixed(2), bloom: bloomEnabled, pixelRatio: renderer.getPixelRatio() }),
     shake: () => shake,
     addShake,
@@ -505,7 +534,7 @@ async function start() {
     grid.build(swarm.posX, swarm.posZ, swarm.count, player.position.x, player.position.z);
     const damage = swarm.update(dt, state.time, player.position.x, player.position.z, grid);
     if (damage > 0) {
-      state.hp -= damage;
+      if (!godMode) state.hp -= damage;
       hud.damageFlash();
       addShake(Math.min(0.6, damage * 0.04));
       sfx.sfxHurt();

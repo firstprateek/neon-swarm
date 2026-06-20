@@ -551,6 +551,11 @@ function run(): void {
     check('hud: boss warning appears', !document.getElementById('boss-warn')!.classList.contains('hidden'));
     hud.tick(3); // longer than the 2.4s warning
     check('hud: boss warning auto-hides after timeout', document.getElementById('boss-warn')!.classList.contains('hidden'));
+
+    hud.toast('TEST');
+    check('hud: toast appears with text', !document.getElementById('toast')!.classList.contains('hidden') && document.getElementById('toast')!.textContent === 'TEST');
+    hud.tick(2); // longer than the 1.6s toast
+    check('hud: toast auto-hides', document.getElementById('toast')!.classList.contains('hidden'));
   }
 }
 

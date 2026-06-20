@@ -91,6 +91,9 @@
     #boss-warn.hidden { display: none; }
     @keyframes bosspulse { 50% { opacity: 0.35; transform: translateX(-50%) scale(1.06); } }
 
+    #toast { position: absolute; top: 30%; left: 50%; transform: translateX(-50%); font-size: 18px; letter-spacing: 4px; color: #44ff99; text-shadow: 0 0 14px #22cc77; padding: 8px 18px; border: 1px solid rgba(68,255,153,0.5); background: rgba(8,12,20,0.7); transition: opacity 0.3s; }
+    #toast.hidden { display: none; }
+
     #floaters { position: absolute; inset: 0; overflow: hidden; }
     .floater { position: absolute; left: 0; top: 0; display: none; font-size: 22px; font-weight: 700; letter-spacing: 1px; text-shadow: 0 0 8px currentColor; will-change: transform, opacity; }
   </style>
@@ -117,6 +120,7 @@
       <div id="boss-bar"><div id="boss-fill"></div></div>
     </div>
     <div id="boss-warn" class="hidden">⚠ BOSS INCOMING ⚠</div>
+    <div id="toast" class="hidden"></div>
     <div id="floaters"></div>
     <div id="vignette"></div>
   </div>

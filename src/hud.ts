@@ -26,10 +26,12 @@ const bossWarn = el('boss-warn');
 const scoreTxt = el('score');
 const comboTxt = el('combo');
 const floatersEl = el('floaters');
+const toastEl = el('toast');
 
 let vignetteOpacity = 0;
 let bossWarnTimer = 0;
 let lastBossQ = -1;
+let toastTimer = 0;
 
 // --- pooled floating text (e.g. boss damage numbers) ---
 interface Floater { el: HTMLSpanElement; x: number; y: number; life: number; maxLife: number }
@@ -163,6 +165,19 @@ export function tick(dt: number): void {
     if (bossWarnTimer <= 0) bossWarn.classList.add('hidden');
   }
   updateFloaters(dt);
+  if (toastTimer > 0) {
+    toastTimer -= dt;
+    if (toastTimer < 0.4) toastEl.style.opacity = Math.max(0, toastTimer / 0.4).toFixed(2);
+    if (toastTimer <= 0) toastEl.classList.add('hidden');
+  }
+}
+
+/** brief centered message (cheat feedback, notifications) */
+export function toast(text: string): void {
+  toastEl.textContent = text;
+  toastEl.style.opacity = '1';
+  toastEl.classList.remove('hidden');
+  toastTimer = 1.6;
 }
 
 /** Show the boss HP bar at the given ratio (quantized to avoid layout churn). */
