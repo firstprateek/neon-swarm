@@ -251,13 +251,16 @@ async function start() {
   if (params.has('mute')) sfx.setMuted(true);
 
   hud.showStart(() => {
-    hud.showAvatarSelect(AVATARS, settings.avatar, idx => {
+    const deploy = (idx: number) => {
       settings.avatar = idx;
       saveSettings(settings);
       setAvatar(idx);
       started = true;
       sfx.initAudio();
-    });
+    };
+    // challenge link (?seed=…) -> drop straight into the run, no avatar-select friction
+    if (params.has('seed')) deploy(settings.avatar);
+    else hud.showAvatarSelect(AVATARS, settings.avatar, deploy);
   });
 
   function togglePause(): void {
@@ -555,7 +558,11 @@ async function start() {
     addShake(2.0);
     sfx.sfxDeath();
     hud.hideBoss();
-    hud.showGameOver(state);
+    hud.showGameOver(state, {
+      survivor: AVATARS[settings.avatar].name,
+      seed: getSeed(),
+      shareUrl: `${location.origin}${location.pathname}?seed=${getSeed()}`,
+    });
   }
 
   // debug/benchmark hook: spawn a ring of n enemies around the player

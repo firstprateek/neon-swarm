@@ -613,8 +613,14 @@ function run(): void {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: '1' }));
     check('hud: number-key pick works', pickedKey !== null);
 
-    hud.showGameOver(s);
-    check('hud: game over shows stats', (document.getElementById('go-stats')!.innerHTML || '').includes('KILLS'));
+    s.score = 123456; s.comboPeak = 33; s.kills = 250;
+    hud.showGameOver(s, { survivor: 'RANGER', seed: 42, shareUrl: 'https://x/?seed=42' });
+    check('hud: brag card shows score + peak + seed',
+      document.getElementById('brag-score')!.textContent === '123,456' &&
+      document.getElementById('brag-sub')!.textContent!.includes('RANGER') &&
+      document.getElementById('brag-seed')!.textContent === 'SEED #42' &&
+      (document.getElementById('go-stats')!.innerHTML || '').includes('KILLS'));
+    check('hud: challenge-a-friend button wired', typeof document.getElementById('share-btn')!.onclick === 'function');
     document.getElementById('gameover-overlay')!.classList.add('hidden');
 
     // boss bar + warning

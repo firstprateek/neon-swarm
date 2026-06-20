@@ -331,14 +331,40 @@ export function showPause(): void { pauseOverlay.classList.remove('hidden'); }
 export function hidePause(): void { pauseOverlay.classList.add('hidden'); }
 export function isPauseOpen(): boolean { return !pauseOverlay.classList.contains('hidden'); }
 
-export function showGameOver(state: GameState): void {
+export interface RunInfo { survivor: string; seed: number; shareUrl: string }
+
+export function showGameOver(state: GameState, info: RunInfo): void {
   const mins = (state.time / 60) | 0;
   const secs = (state.time % 60) | 0;
+  const time = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  const peakMult = (1 + Math.min(state.comboPeak, 40) * 0.1).toFixed(1);
+
+  el('brag-score').textContent = state.score.toLocaleString();
+  el('brag-sub').textContent = `${info.survivor} · PEAK ×${peakMult}`;
+  goStats.className = 'brag-grid';
   goStats.innerHTML =
-    `SCORE <b>${state.score.toLocaleString()}</b><br/>` +
-    `SURVIVED <b>${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}</b><br/>` +
-    `KILLS <b>${state.kills.toLocaleString()}</b><br/>` +
-    `LEVEL <b>${state.level}</b>`;
+    `<div>SURVIVED <b>${time}</b></div>` +
+    `<div>KILLS <b>${state.kills.toLocaleString()}</b></div>` +
+    `<div>LEVEL <b>${state.level}</b></div>` +
+    `<div>PEAK COMBO <b>${state.comboPeak}</b></div>`;
+  el('brag-seed').textContent = `SEED #${info.seed}`;
+
+  const shareText = `I scored ${state.score.toLocaleString()} in NEON SWARM 🧟 — same seed, can you beat my run? ${info.shareUrl}`;
+  const shareBtn = el<HTMLButtonElement>('share-btn');
+  shareBtn.textContent = '⚔ CHALLENGE A FRIEND';
+  shareBtn.onclick = async () => {
+    try {
+      const nav = navigator as Navigator & { share?: (d: { text: string }) => Promise<void> };
+      if (nav.share) {
+        await nav.share({ text: shareText });
+      } else {
+        await navigator.clipboard.writeText(shareText);
+        shareBtn.textContent = '✓ LINK COPIED!';
+      }
+    } catch {
+      try { await navigator.clipboard.writeText(shareText); shareBtn.textContent = '✓ LINK COPIED!'; } catch { /* ignore */ }
+    }
+  };
   el<HTMLButtonElement>('restart-btn').onclick = () => location.reload();
   gameoverOverlay.classList.remove('hidden');
 }

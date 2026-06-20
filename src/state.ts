@@ -23,6 +23,7 @@ export interface GameState {
   // scoring (also the future global-leaderboard metric)
   score: number;
   combo: number;
+  comboPeak: number;
   comboTimer: number;
   // active abilities (limited charges)
   missiles: number;
@@ -51,6 +52,7 @@ export function createState(): GameState {
     teslaLevel: 0,
     score: 0,
     combo: 0,
+    comboPeak: 0,
     comboTimer: 0,
     missiles: 3,
     nukes: 1,
@@ -79,6 +81,7 @@ export function comboMultiplier(s: GameState): number {
 /** register a kill: extend the combo and add combo-scaled score */
 export function registerKill(s: GameState, type: number): void {
   s.combo++;
+  if (s.combo > s.comboPeak) s.comboPeak = s.combo;
   s.comboTimer = COMBO_WINDOW;
   const base = SCORE_BY_TYPE[type] ?? 1;
   s.score += Math.round(base * comboMultiplier(s));
