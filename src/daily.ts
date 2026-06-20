@@ -7,6 +7,7 @@
  *
  * `now` is injectable so this stays pure + testable.
  */
+import { type Difficulty, coerceDifficulty } from './modes';
 
 // Daily #1 = 2026-06-01 UTC
 const EPOCH = Date.UTC(2026, 5, 1);
@@ -41,22 +42,24 @@ export function secondsToNextDaily(now: number): number {
   return Math.ceil((DAY_MS - (now % DAY_MS)) / 1000);
 }
 
-// --- local best per daily (localStorage) ---
-const keyFor = (num: number) => `ns-daily-best-${num}`;
+// --- local best per daily PER MODE (localStorage) ---
+// easy/medium/hard are independent leaderboards. Old un-suffixed keys are NOT
+// migrated (the historical assist tier is unknown — seeding a board would corrupt it).
+const keyFor = (num: number, mode: Difficulty) => `ns-daily-best-${num}-${coerceDifficulty(mode)}`;
 
-export function getDailyBest(num: number): number {
+export function getDailyBest(num: number, mode: Difficulty): number {
   try {
-    return Number(localStorage.getItem(keyFor(num))) || 0;
+    return Number(localStorage.getItem(keyFor(num, mode))) || 0;
   } catch {
     return 0;
   }
 }
 
-/** record a daily score; returns true if it's a new personal best for that day */
-export function recordDailyScore(num: number, score: number): boolean {
+/** record a daily score for a mode; returns true if it's a new best for that (day, mode) */
+export function recordDailyScore(num: number, mode: Difficulty, score: number): boolean {
   try {
-    if (score > getDailyBest(num)) {
-      localStorage.setItem(keyFor(num), String(score));
+    if (score > getDailyBest(num, mode)) {
+      localStorage.setItem(keyFor(num, mode), String(score));
       return true;
     }
   } catch {

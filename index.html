@@ -86,6 +86,12 @@
     .tc-btn.tc-empty { opacity: 0.32; border-color: #ff5566; color: #ff5566; }
     .tc-btn .tc-ct { position: absolute; right: 2px; bottom: 0; font-size: 12px; color: #44ff99; text-shadow: 0 0 4px #000; }
     .tc-btn.tc-empty .tc-ct { color: #ff5566; }
+    /* held FIRE button (auto-fire OFF) — bottom-right, above the joystick thumb */
+    #tc-fire { position: absolute; right: max(20px, env(safe-area-inset-right));
+      bottom: calc(max(20px, env(safe-area-inset-bottom)) + 150px);
+      width: 84px; height: 84px; border-color: #ff5566; color: #ff5566; font-size: 30px; z-index: 1; }
+    #tc-fire.down { transform: scale(0.92); box-shadow: 0 0 26px #ff5566; }
+    .tc-hidden { display: none !important; }
 
     /* ---- feedback panel (inside game-over overlay) ---- */
     #feedback-panel { width: 340px; max-width: 88vw; margin-top: 4px; padding: 16px 18px;
@@ -175,6 +181,44 @@
     .settings-panel select, .settings-panel input[type="range"] { font-family: inherit; font-size: 13px; background: rgba(0,0,0,0.4); color: var(--accent); border: 1px solid var(--accent-dim); padding: 4px 6px; }
     .settings-panel input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
     .settings-panel input[type="range"] { width: 140px; accent-color: var(--accent); }
+
+    /* ---- expanded settings screen ---- */
+    .settings-screen { display: flex; flex-direction: column; gap: 14px; width: 350px; max-width: 92vw; max-height: 68vh; overflow-y: auto; padding: 2px; }
+    .set-section { background: var(--panel); border: 1px solid rgba(94,242,255,0.3); padding: 14px 16px; }
+    .set-section label { display: flex; align-items: center; justify-content: space-between; font-size: 13px; letter-spacing: 2px; color: #a8ccd6; gap: 14px; margin-top: 8px; }
+    .set-section select, .set-section input[type="range"] { font-family: inherit; font-size: 13px; background: rgba(0,0,0,0.4); color: var(--accent); border: 1px solid var(--accent-dim); padding: 4px 6px; }
+    .set-section input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
+    .set-section input[type="range"] { width: 150px; accent-color: var(--accent); }
+    .set-h { margin: 0 0 6px; font-size: 13px; letter-spacing: 4px; color: var(--accent); }
+    .preset-row { display: flex; gap: 8px; }
+    .preset-btn { flex: 1; font-family: inherit; font-size: 12px; letter-spacing: 2px; padding: 8px 0; background: transparent; color: #a8ccd6; border: 1px solid rgba(94,242,255,0.3); cursor: pointer; }
+    .preset-btn.active { color: #05060a; background: var(--accent); border-color: var(--accent); font-weight: 700; }
+    .set-hint { font-size: 11px; letter-spacing: 1px; color: #6a8a96; margin-top: 8px; line-height: 1.5; }
+    .keybind-list { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+    .kb-row { display: flex; align-items: center; justify-content: space-between; font-family: inherit; font-size: 12px; letter-spacing: 1px; color: #a8ccd6; background: rgba(0,0,0,0.3); border: 1px solid rgba(94,242,255,0.18); padding: 6px 10px; cursor: pointer; }
+    .kb-row kbd { font-family: inherit; color: var(--accent); border: 1px solid var(--accent-dim); padding: 1px 8px; min-width: 56px; text-align: center; }
+    .kb-row.capturing kbd { color: #ffd24a; border-color: #ffd24a; animation: blink 1s infinite; }
+    .kb-row.bad kbd { color: #ff5566; border-color: #ff5566; }
+    .kb-reset { font-family: inherit; font-size: 11px; letter-spacing: 2px; padding: 6px; margin-top: 8px; width: 100%; background: transparent; color: #6a8a96; border: 1px solid rgba(94,242,255,0.2); cursor: pointer; }
+    .set-locked-note { font-size: 11px; letter-spacing: 1px; color: #ffd24a; margin-top: 10px; }
+    #set-controls[data-locked="true"] .preset-row,
+    #set-controls[data-locked="true"] > label,
+    #set-controls[data-locked="true"] .keybind-list,
+    #set-controls[data-locked="true"] .kb-reset { opacity: .4; pointer-events: none; }
+    #set-controls[data-locked="true"] { border-left: 2px solid #ffd24a; }
+    body.touch .keybind-list, body.touch .kb-reset { display: none; } /* remap is keyboard-only */
+
+    .gear-btn { position: absolute; top: 14px; right: 14px; width: 46px; height: 46px; font-size: 22px;
+      background: rgba(8,14,20,0.6); color: var(--accent); border: 1px solid rgba(94,242,255,0.4);
+      cursor: pointer; pointer-events: auto; z-index: 16; display: flex; align-items: center; justify-content: center; }
+    .gear-btn:hover { box-shadow: 0 0 14px rgba(94,242,255,0.4); }
+    #hud-gear { position: fixed; display: none; }
+    body.touch #hud-gear { display: flex; }
+    body.touch .stats { right: 66px; } /* clear the in-game gear */
+
+    .dm-label { font-size: 18px; letter-spacing: 3px; color: #ffd24a; }
+    .dm-best { font-size: 11px; color: #6a8a96; margin-top: 6px; }
+    .dailymode-card { width: 152px; }
     .pause-buttons { display: flex; gap: 16px; }
     .pause-buttons button { padding: 12px 30px; font-family: inherit; font-size: 15px; letter-spacing: 3px; background: transparent; color: var(--accent); border: 1px solid var(--accent); cursor: pointer; }
     .pause-buttons button:hover { background: rgba(94,242,255,0.12); box-shadow: 0 0 18px rgba(94,242,255,0.4); }
@@ -236,9 +280,13 @@
       <button id="tc-missile" class="tc-btn" aria-label="Missile">🚀<span class="tc-ct" id="tc-missile-ct">3</span></button>
       <button id="tc-nuke"    class="tc-btn" aria-label="Nuke">☢<span class="tc-ct" id="tc-nuke-ct">1</span></button>
     </div>
+    <button id="tc-fire" class="tc-btn tc-hidden" aria-label="Fire">✶</button>
   </div>
 
+  <button id="hud-gear" class="gear-btn" aria-label="Pause / Settings">⚙</button>
+
   <div id="start-overlay" class="overlay">
+    <button id="title-gear" class="gear-btn" aria-label="Settings">⚙</button>
     <div class="title">NEON SWARM</div>
     <div class="subtitle">WASD / ARROWS TO MOVE &nbsp;·&nbsp; WEAPONS AUTO-FIRE &nbsp;·&nbsp; SURVIVE</div>
     <div class="start-modes">
@@ -258,6 +306,12 @@
     <div class="subtitle" style="font-size: 22px; color: #eaffff; text-shadow: 0 0 12px var(--accent);">CHOOSE YOUR SURVIVOR</div>
     <div class="avatar-cards" id="avatar-cards"></div>
     <div class="blink">1–4 SELECT · ENTER / CLICK TO DEPLOY</div>
+  </div>
+
+  <div id="dailymode-overlay" class="overlay hidden">
+    <div class="subtitle" id="dailymode-title" style="font-size: 22px; color: #ffd24a; text-shadow: 0 0 12px #ffb020;">☀ DAILY — CHOOSE A MODE</div>
+    <div class="avatar-cards" id="dailymode-cards"></div>
+    <div class="blink">1–3 SELECT · ENTER / CLICK · separate leaderboard each</div>
   </div>
 
   <div id="levelup-overlay" class="overlay hidden">
@@ -301,32 +355,62 @@
 
   <div id="pause-overlay" class="overlay hidden">
     <div class="title" style="font-size: 40px; letter-spacing: 10px;">PAUSED</div>
-    <div class="settings-panel">
-      <label>QUALITY
-        <select id="set-quality">
-          <option value="auto">Auto (adaptive)</option>
-          <option value="ultra">Ultra</option>
-          <option value="high">High</option>
-          <option value="medium">Medium</option>
-          <option value="low">Low</option>
-        </select>
-      </label>
-      <label>FPS TARGET
-        <select id="set-fps">
-          <option value="60">60</option>
-          <option value="120">120</option>
-          <option value="144">144</option>
-        </select>
-      </label>
-      <label>BLOOM <input type="checkbox" id="set-bloom" /></label>
-      <label>SOUND <input type="checkbox" id="set-sound" /></label>
-      <label>VOLUME <input type="range" id="set-volume" min="0" max="100" /></label>
-    </div>
     <div class="pause-buttons">
       <button id="resume-btn">RESUME</button>
+      <button id="pause-settings-btn">SETTINGS</button>
       <button id="pause-restart-btn">RESTART</button>
     </div>
     <div class="subtitle">ESC TO RESUME</div>
+  </div>
+
+  <div id="settings-overlay" class="overlay hidden">
+    <div class="title" style="font-size: 30px; letter-spacing: 8px;">SETTINGS</div>
+    <div class="settings-screen">
+      <section class="set-section" id="set-controls" data-locked="false">
+        <h3 class="set-h">CONTROLS</h3>
+        <div class="preset-row" id="set-presets">
+          <button class="preset-btn" data-diff="easy">EASY</button>
+          <button class="preset-btn" data-diff="medium">MEDIUM</button>
+          <button class="preset-btn" data-diff="hard">HARD</button>
+        </div>
+        <label>AUTO-FIRE <input type="checkbox" id="set-autofire" /></label>
+        <label>GUN AUTO-LOCK <input type="checkbox" id="set-gunlock" /></label>
+        <label>MISSILE AUTO-LOCK <input type="checkbox" id="set-misslock" /></label>
+        <div class="set-hint" id="set-fire-hint"></div>
+        <div class="keybind-list" id="set-keys"></div>
+        <button class="kb-reset" id="kb-reset">RESET KEYS TO DEFAULT</button>
+        <div class="set-locked-note hidden" id="set-locked-note">DAILY · <span id="set-locked-mode">EASY</span> — controls locked for this run</div>
+      </section>
+      <section class="set-section">
+        <h3 class="set-h">AUDIO</h3>
+        <label>SOUND <input type="checkbox" id="set-sound" /></label>
+        <label>EFFECTS <input type="range" id="set-volume" min="0" max="100" /></label>
+        <label>MUSIC <input type="range" id="set-music" min="0" max="100" /></label>
+      </section>
+      <section class="set-section">
+        <h3 class="set-h">VIDEO</h3>
+        <label>QUALITY
+          <select id="set-quality">
+            <option value="auto">Auto (adaptive)</option>
+            <option value="ultra">Ultra</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </label>
+        <label>FPS TARGET
+          <select id="set-fps">
+            <option value="60">60</option>
+            <option value="120">120</option>
+            <option value="144">144</option>
+          </select>
+        </label>
+        <label>BLOOM <input type="checkbox" id="set-bloom" /></label>
+      </section>
+    </div>
+    <div class="pause-buttons">
+      <button id="settings-done">DONE</button>
+    </div>
   </div>
 
   <script type="module" src="/src/main.ts"></script>

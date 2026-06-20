@@ -1,7 +1,14 @@
+import { type KeyMap, isDown, defaultKeys } from './keybind';
+
 const keys = new Set<string>();
+let bind: KeyMap = defaultKeys(); // remappable; main.ts calls setKeyMap on load + remap
+
+export function setKeyMap(m: KeyMap): void { bind = m; }
+export function heldKeys(): Set<string> { return keys; } // for the polled FIRE read
 
 window.addEventListener('keydown', e => {
-  if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
+  // prevent the FIRE key (and arrows/space) from scrolling/activating the page
+  if (e.code === bind.fire || e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
   keys.add(e.code);
 });
 window.addEventListener('keyup', e => keys.delete(e.code));
@@ -28,10 +35,10 @@ export function getMove(): { x: number; z: number } {
   if (touchActive) { move.x = touchX; move.z = touchZ; return move; }
 
   let x = 0, z = 0;
-  if (keys.has('KeyA') || keys.has('ArrowLeft')) x -= 1;
-  if (keys.has('KeyD') || keys.has('ArrowRight')) x += 1;
-  if (keys.has('KeyW') || keys.has('ArrowUp')) z -= 1;
-  if (keys.has('KeyS') || keys.has('ArrowDown')) z += 1;
+  if (isDown(bind, keys, 'moveLeft') || keys.has('ArrowLeft')) x -= 1;
+  if (isDown(bind, keys, 'moveRight') || keys.has('ArrowRight')) x += 1;
+  if (isDown(bind, keys, 'moveUp') || keys.has('ArrowUp')) z -= 1;
+  if (isDown(bind, keys, 'moveDown') || keys.has('ArrowDown')) z += 1;
   if (x !== 0 && z !== 0) {
     const inv = 1 / Math.SQRT2;
     x *= inv; z *= inv;

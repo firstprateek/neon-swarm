@@ -3,7 +3,9 @@ import { pass } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { createState, grantXp, rollUpgrades, registerKill, tickCombo, UPGRADES,
   MISSILE_MAX, NUKE_MAX, MISSILE_REFILL, MISSILE_DMG, MISSILE_AOE, NUKE_DMG } from './state';
-import { getMove, setTouchMove, clearTouchMove } from './input';
+import { getMove, setTouchMove, clearTouchMove, setKeyMap, heldKeys } from './input';
+import { resolveAction, isDown, defaultKeys, isBindable, keyLabel, KEY_ACTIONS, ACTION_LABELS, type KeyAction } from './keybind';
+import { type Difficulty, DIFFICULTIES, flagsToPreset, coerceDifficulty } from './modes';
 import { createTouch } from './touch';
 import { submitFeedback, flushFeedback, beaconFlush, deviceClass, APP_VERSION, type FeedbackCtx } from './feedback';
 import { SpatialGrid } from './spatial';
@@ -13,7 +15,7 @@ import { Blast } from './fx';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize, BOSS_INTERVAL } from './director';
 import { createQuality, governQuality, QUALITY_TIERS, MAX_TIER } from './perf';
-import { loadSettings, saveSettings, qualityTier, type Settings, type QualityMode } from './settings';
+import { loadSettings, saveSettings, qualityTier, applyPreset, type Settings, type QualityMode } from './settings';
 import { AVATARS, makeSurvivor } from './avatars';
 import { setSeed, getSeed, randomSeed, srand } from './rng';
 import { dailySeed, dailyNumber, getDailyBest, recordDailyScore } from './daily';
@@ -87,6 +89,8 @@ async function start() {
 
   // persisted player settings; URL params still override below
   const settings = loadSettings();
+  setKeyMap(settings.keybinds); // wire remappable bindings into the input layer
+  let dailyMode: Difficulty = settings.dailyMode; // the locked control tier for a daily run
   let targetFps = settings.fps;
   let targetFrameMs = 1000 / targetFps;
   // pinnedTier >= 0 pins a quality tier and disables the adaptive governor; -1 = auto
@@ -101,6 +105,8 @@ async function start() {
   // title screen; we set a provisional random seed now so any pre-start use is sane.
   const challengeSeed = params.has('seed') ? (Number(params.get('seed')) >>> 0) : null;
   setSeed(challengeSeed != null ? challengeSeed : randomSeed());
+  // a challenge link can carry the control tier so it replays the same assist mode
+  if (challengeSeed != null && params.has('mode')) applyPreset(settings, coerceDifficulty(params.get('mode')));
   let isDaily = false; // current run is today's Daily Challenge
   let dailyNum = 0;
 
@@ -281,6 +287,7 @@ async function start() {
     saveSettings(settings);
     setAvatar(idx);
     started = true;
+    touch?.setFireVisible(!settings.autoFire); // mobile FIRE button only when auto-fire is off
     sfx.initAudio();
   };
   // challenge link drops straight into the run; otherwise pick a survivor first
@@ -290,12 +297,24 @@ async function start() {
   };
   hud.showStart({
     challengeSeed,
-    daily: { num: dailyNumber(Date.now()), best: getDailyBest(dailyNumber(Date.now())) },
+    daily: { num: dailyNumber(Date.now()), best: Math.max(...DIFFICULTIES.map(m => getDailyBest(dailyNumber(Date.now()), m))) },
     onDaily: () => {
       isDaily = true;
       dailyNum = dailyNumber(Date.now());
-      setSeed(dailySeed(Date.now())); // global same-seed run for everyone today
-      startRun();
+      setSeed(dailySeed(Date.now())); // global same-seed run for everyone today (mode never touches the seed)
+      const cards = DIFFICULTIES.map(m => ({
+        mode: m,
+        label: m.toUpperCase(),
+        tag: { easy: 'auto-fire · auto-aim', medium: 'auto-fire · manual aim', hard: 'fully manual' }[m],
+        best: getDailyBest(dailyNum, m),
+      }));
+      hud.showDailyModeSelect(dailyNum, cards, settings.dailyMode, (m) => {
+        dailyMode = m;
+        settings.dailyMode = m;
+        applyPreset(settings, m); // lock the assist flags for this run
+        saveSettings(settings);
+        startRun();
+      });
     },
     onFreePlay: () => {
       // a challenge link keeps its given seed; plain free play rolls a fresh one
@@ -307,13 +326,13 @@ async function start() {
   function togglePause(): void {
     if (!started || over || leveling) return; // can't pause pre-start, dead, or mid-level-up
     paused = !paused;
-    if (paused) { syncPauseControls(); hud.showPause(); }
-    else hud.hidePause();
+    if (paused) hud.showPause();
+    else { hud.hidePause(); closeSettings(); }
   }
 
   window.addEventListener('keydown', e => {
     if (e.code === 'KeyM') sfx.toggleMute();
-    else if (e.code === 'Escape') togglePause();
+    else if (e.code === 'Escape') { if (settingsOpen()) closeSettings(); else togglePause(); }
   });
 
   // --- cheat codes: type the sequence anytime ---
@@ -349,13 +368,81 @@ async function start() {
   const bloomChk = byId<HTMLInputElement>('set-bloom');
   const soundChk = byId<HTMLInputElement>('set-sound');
   const volRange = byId<HTMLInputElement>('set-volume');
+  const musicRange = byId<HTMLInputElement>('set-music');
+  const autofireChk = byId<HTMLInputElement>('set-autofire');
+  const gunlockChk = byId<HTMLInputElement>('set-gunlock');
+  const misslockChk = byId<HTMLInputElement>('set-misslock');
+  const presetBtns = Array.from(document.querySelectorAll<HTMLButtonElement>('#set-presets .preset-btn'));
+  const keysList = byId('set-keys');
+  const settingsOverlay = byId('settings-overlay');
+  const controlsLocked = () => isDaily; // daily locks controls for the run; free play stays editable
 
-  function syncPauseControls(): void {
+  // --- keybind remap rows (desktop) ---
+  const keyRows = new Map<KeyAction, HTMLButtonElement>();
+  function buildKeyRows(): void {
+    if (keyRows.size) return;
+    for (const a of KEY_ACTIONS) {
+      const row = document.createElement('button');
+      row.className = 'kb-row';
+      row.dataset.action = a;
+      row.innerHTML = `<span>${ACTION_LABELS[a]}</span><kbd></kbd>`;
+      row.addEventListener('click', () => captureKey(a, row));
+      keysList.appendChild(row);
+      keyRows.set(a, row);
+    }
+  }
+  function syncKeyControls(): void {
+    buildKeyRows();
+    for (const a of KEY_ACTIONS) (keyRows.get(a)!.querySelector('kbd') as HTMLElement).textContent = keyLabel(settings.keybinds[a]);
+  }
+  let capturing = false;
+  function captureKey(action: KeyAction, row: HTMLButtonElement): void {
+    if (controlsLocked() || capturing) return;
+    capturing = true;
+    row.classList.add('capturing');
+    (row.querySelector('kbd') as HTMLElement).textContent = 'PRESS…';
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault(); e.stopImmediatePropagation(); // never reach game/cheat/pause handlers
+      window.removeEventListener('keydown', onKey, true);
+      capturing = false;
+      row.classList.remove('capturing', 'bad');
+      if (e.code === 'Escape') { syncKeyControls(); return; } // cancel
+      if (!isBindable(e.code)) { row.classList.add('bad'); syncKeyControls(); return; }
+      const old = settings.keybinds[action];
+      const other = KEY_ACTIONS.find(k => k !== action && settings.keybinds[k] === e.code);
+      settings.keybinds[action] = e.code;
+      if (other) settings.keybinds[other] = old; // swap displaced action onto the freed key
+      setKeyMap(settings.keybinds); saveSettings(settings); syncKeyControls();
+    };
+    window.addEventListener('keydown', onKey, true); // capture phase
+  }
+  byId<HTMLButtonElement>('kb-reset').addEventListener('click', () => {
+    if (controlsLocked()) return;
+    settings.keybinds = defaultKeys();
+    setKeyMap(settings.keybinds); saveSettings(settings); syncKeyControls();
+  });
+
+  function syncSettings(): void {
     qSel.value = settings.quality;
     fpsSel.value = String(settings.fps);
     bloomChk.checked = settings.bloom;
     soundChk.checked = settings.sound;
     volRange.value = String(settings.volume);
+    musicRange.value = String(settings.music);
+    autofireChk.checked = settings.autoFire;
+    gunlockChk.checked = settings.gunLock;
+    misslockChk.checked = settings.missileLock;
+    const p = flagsToPreset(settings); // highlight derived from booleans — never lies
+    presetBtns.forEach(b => b.classList.toggle('active', b.dataset.diff === p));
+    byId('set-fire-hint').textContent =
+      (settings.autoFire ? 'GUN auto-fires' : 'GUN: hold FIRE to shoot') +
+      ' · aim ' + (settings.gunLock ? 'auto-locks nearest' : 'follows facing') +
+      ' · missile ' + (settings.missileLock ? 'homes' : 'dumb-fires');
+    const locked = controlsLocked();
+    byId('set-controls').dataset.locked = String(locked);
+    byId('set-locked-note').classList.toggle('hidden', !locked);
+    if (locked) byId('set-locked-mode').textContent = dailyMode.toUpperCase();
+    syncKeyControls();
   }
 
   function applySettings(): void {
@@ -370,11 +457,28 @@ async function start() {
     saveSettings(settings);
   }
 
+  // control mutations are blocked while a daily run locks the tier
+  const onCtl = (mut: () => void) => { if (controlsLocked()) return; mut(); applySettings(); syncSettings(); };
+  autofireChk.addEventListener('change', () => onCtl(() => { settings.autoFire = autofireChk.checked; touch?.setFireVisible(!settings.autoFire); }));
+  gunlockChk.addEventListener('change', () => onCtl(() => { settings.gunLock = gunlockChk.checked; }));
+  misslockChk.addEventListener('change', () => onCtl(() => { settings.missileLock = misslockChk.checked; }));
+  presetBtns.forEach(b => b.addEventListener('click', () => onCtl(() => applyPreset(settings, b.dataset.diff as Difficulty))));
+
   qSel.addEventListener('change', () => { settings.quality = qSel.value as QualityMode; applySettings(); });
   fpsSel.addEventListener('change', () => { settings.fps = Number(fpsSel.value); applySettings(); });
   bloomChk.addEventListener('change', () => { settings.bloom = bloomChk.checked; applySettings(); });
   soundChk.addEventListener('change', () => { settings.sound = soundChk.checked; applySettings(); });
   volRange.addEventListener('input', () => { settings.volume = Number(volRange.value); applySettings(); });
+  musicRange.addEventListener('input', () => { settings.music = Number(musicRange.value); applySettings(); });
+
+  // settings overlay (shared by title gear + pause)
+  function settingsOpen(): boolean { return !settingsOverlay.classList.contains('hidden'); }
+  function openSettings(): void { syncSettings(); settingsOverlay.classList.remove('hidden'); }
+  function closeSettings(): void { settingsOverlay.classList.add('hidden'); }
+  byId<HTMLButtonElement>('settings-done').addEventListener('click', closeSettings);
+  byId<HTMLButtonElement>('title-gear').addEventListener('click', openSettings);
+  byId<HTMLButtonElement>('hud-gear').addEventListener('click', () => togglePause());
+  byId<HTMLButtonElement>('pause-settings-btn').addEventListener('click', openSettings);
   byId<HTMLButtonElement>('resume-btn').addEventListener('click', () => togglePause());
   byId<HTMLButtonElement>('pause-restart-btn').addEventListener('click', () => location.reload());
 
@@ -504,20 +608,24 @@ async function start() {
 
   // --- firing ---
   let fireAcc = 0;
+  let fireHeld = false; // desktop FIRE key/mouse held (manual auto-fire-off mode)
+  const setFireHeld = (v: boolean): void => { fireHeld = v; };
   let facing = 0;
   let muzzle = 0; // muzzle-flash glow pulse, decays each frame
   const baseGlow = glow.intensity;
 
   function fireVolley(): void {
     const px = player.position.x, pz = player.position.z;
-    let dirX = Math.sin(facing), dirZ = Math.cos(facing);
-    const target = swarm.nearest(px, pz);
-    if (target >= 0) {
-      const dx = swarm.posX[target] - px, dz = swarm.posZ[target] - pz;
-      const d = Math.sqrt(dx * dx + dz * dz) + 1e-6;
-      dirX = dx / d;
-      dirZ = dz / d;
-    }
+    let dirX = Math.sin(facing), dirZ = Math.cos(facing); // default: where we FACE
+    if (settings.gunLock) {                                // ON => auto-aim nearest
+      const target = swarm.nearest(px, pz);
+      if (target >= 0) {
+        const dx = swarm.posX[target] - px, dz = swarm.posZ[target] - pz;
+        const d = Math.sqrt(dx * dx + dz * dz) + 1e-6;
+        dirX = dx / d;
+        dirZ = dz / d;
+      }
+    } // OFF => keep facing dir, no nearest scan
     const n = state.projectiles;
     const spread = 0.14;
     const base = Math.atan2(dirX, dirZ) - ((n - 1) / 2) * spread;
@@ -534,10 +642,13 @@ async function start() {
     if (state.missiles <= 0) { hud.toast('NO MISSILES'); return; }
     const px = player.position.x, pz = player.position.z;
     let dirX = Math.sin(facing), dirZ = Math.cos(facing);
-    const t = swarm.nearest(px, pz);
-    if (t >= 0) { const dx = swarm.posX[t] - px, dz = swarm.posZ[t] - pz; const d = Math.sqrt(dx * dx + dz * dz) + 1e-6; dirX = dx / d; dirZ = dz / d; }
+    const homing = settings.missileLock; // ON => aim+seek nearest; OFF => dumb-fire straight along facing
+    if (homing) {
+      const t = swarm.nearest(px, pz);
+      if (t >= 0) { const dx = swarm.posX[t] - px, dz = swarm.posZ[t] - pz; const d = Math.sqrt(dx * dx + dz * dz) + 1e-6; dirX = dx / d; dirZ = dz / d; }
+    }
     // launch just ahead of the survivor so it doesn't pop out of their chest
-    missiles.fire(px + dirX * 0.9, pz + dirZ * 0.9, dirX, dirZ, MISSILE_DMG, MISSILE_AOE);
+    missiles.fire(px + dirX * 0.9, pz + dirZ * 0.9, dirX, dirZ, MISSILE_DMG, MISSILE_AOE, homing);
     state.missiles--;
     // muzzle flash so the launch reads as a real "fire"
     particles.burst(px + dirX * 1.1, 0.7, pz + dirZ * 1.1, new THREE.Color(0xffe6b0), 22, 18);
@@ -587,9 +698,11 @@ async function start() {
 
   window.addEventListener('keydown', e => {
     if (!canAct()) return;
-    if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) fireMissile(); }
-    else if (e.code === 'KeyQ') { if (!e.repeat) fireNuke(); }
-    else if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') { if (!e.repeat) doDash(); }
+    const a = resolveAction(settings.keybinds, e.code);
+    if (a === 'fire') e.preventDefault();              // polled (held) — the volley loop reads it
+    else if (a === 'missile') { if (!e.repeat) fireMissile(); }
+    else if (a === 'nuke') { if (!e.repeat) fireNuke(); }
+    else if (a === 'dash' || e.code === 'ShiftRight') { if (!e.repeat) doDash(); } // ShiftRight = fixed dash alias
   });
 
   // wall-clock ability cooldown + missile refill (unaffected by hit-stop slow-mo)
@@ -610,7 +723,7 @@ async function start() {
     addShake(2.0);
     sfx.sfxDeath();
     hud.hideBoss();
-    const newDailyBest = isDaily ? recordDailyScore(dailyNum, state.score) : false;
+    const newDailyBest = isDaily ? recordDailyScore(dailyNum, dailyMode, state.score) : false;
     const seed = getSeed();
     // anonymous run context for feedback — no UA, no id, no geo (privacy ceiling)
     const fbCtx: FeedbackCtx = {
@@ -622,6 +735,7 @@ async function start() {
       locale: navigator.language,
       mode: isDaily ? 'daily' : 'free',
       dailyNum: isDaily ? dailyNum : null,
+      dailyMode: isDaily ? dailyMode : null,
       seed, survivor: AVATARS[settings.avatar].name,
       score: state.score, timeS: state.time | 0,
       level: state.level, kills: state.kills, comboPeak: state.comboPeak,
@@ -629,8 +743,8 @@ async function start() {
     hud.showGameOver(state, {
       survivor: AVATARS[settings.avatar].name,
       seed,
-      shareUrl: `${location.origin}${location.pathname}?seed=${seed}`,
-      daily: isDaily ? { num: dailyNum, best: getDailyBest(dailyNum), isBest: newDailyBest } : null,
+      shareUrl: `${location.origin}${location.pathname}?seed=${seed}${isDaily ? `&mode=${dailyMode}` : ''}`,
+      daily: isDaily ? { num: dailyNum, mode: dailyMode, best: getDailyBest(dailyNum, dailyMode), isBest: newDailyBest } : null,
       onFeedback: (input) => submitFeedback(input, fbCtx),
     });
   }
@@ -667,11 +781,16 @@ async function start() {
     missiles, fireMissile, fireNuke, doDash,
     blast, blastActive: () => blast.active,
     touch, canAct, setTouchMove, clearTouchMove, getMove,
+    fireVolley, setFireHeld,
+    controls: () => ({ autoFire: settings.autoFire, gunLock: settings.gunLock, missileLock: settings.missileLock }),
+    setControls: (p: Partial<Pick<Settings, 'autoFire' | 'gunLock' | 'missileLock'>>) => Object.assign(settings, p),
+    isFiring: () => touch?.isFiring() ?? false,
+    setFireVisible: (b: boolean) => touch?.setFireVisible(b),
     dashReady: () => dashCd <= 0,
     iframes: () => iframes,
     seed: () => getSeed(),
     setSeed,
-    daily: () => ({ isDaily, num: dailyNum }),
+    daily: () => ({ isDaily, num: dailyNum, mode: dailyMode }),
     audio: () => ({ ready: sfx.audioReady(), muted: sfx.isMuted() }),
     // test hook: feed a synthetic frame time to the governor and apply any tier change
     feedFrame: (frameMs: number) => {
@@ -754,11 +873,20 @@ async function start() {
 
     director(dt);
 
-    fireAcc += dt * state.fireRate;
-    if (fireAcc > 4) fireAcc = 4;
-    while (fireAcc >= 1) {
-      fireAcc -= 1;
-      fireVolley();
+    // gun fires automatically, OR only while a FIRE control is held (auto-fire OFF)
+    const wantFire = settings.autoFire
+      || isDown(settings.keybinds, heldKeys(), 'fire')   // desktop polled FIRE key
+      || (touch?.isFiring() ?? false)                    // mobile FIRE button
+      || fireHeld;                                       // mouse/explicit hold
+    if (wantFire) {
+      fireAcc += dt * state.fireRate;
+      if (fireAcc > 4) fireAcc = 4;
+      while (fireAcc >= 1) {
+        fireAcc -= 1;
+        fireVolley();
+      }
+    } else {
+      fireAcc = 0; // no bank-up: a tap fires exactly one volley
     }
 
     bullets.update(dt, swarm, grid);

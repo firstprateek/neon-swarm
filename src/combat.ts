@@ -263,6 +263,7 @@ export class Missiles {
   readonly dmg: Float32Array;
   readonly aoe: Float32Array;
   readonly trailAcc: Float32Array; // distance since the last exhaust puff (fps-independent trail)
+  readonly homing: Uint8Array;     // 1 = seek nearest in flight; 0 = dumb-fire straight
   readonly mesh: THREE.InstancedMesh;
   private readonly speed = 26;
 
@@ -276,6 +277,7 @@ export class Missiles {
     this.dmg = new Float32Array(max);
     this.aoe = new Float32Array(max);
     this.trailAcc = new Float32Array(max);
+    this.homing = new Uint8Array(max);
     // a chunky, bright rocket so it reads clearly streaking across the field
     const geo = new THREE.ConeGeometry(0.45, 1.6, 8);
     const mat = new THREE.MeshBasicMaterial({ color: 0xffd24a });
@@ -289,13 +291,14 @@ export class Missiles {
 
   private syncDraw(): void { this.mesh.count = this.count; this.mesh.visible = this.count > 0; }
 
-  fire(x: number, z: number, dirX: number, dirZ: number, dmg: number, aoe: number): void {
+  fire(x: number, z: number, dirX: number, dirZ: number, dmg: number, aoe: number, homing = true): void {
     if (this.count >= this.max) return;
     const i = this.count++;
     this.px[i] = x; this.pz[i] = z;
     this.vx[i] = dirX * this.speed; this.vz[i] = dirZ * this.speed;
     this.life[i] = 2.4; this.dmg[i] = dmg; this.aoe[i] = aoe;
     this.trailAcc[i] = 0;
+    this.homing[i] = homing ? 1 : 0;
     this.syncDraw();
   }
 
@@ -306,6 +309,7 @@ export class Missiles {
       this.vx[i] = this.vx[last]; this.vz[i] = this.vz[last];
       this.life[i] = this.life[last]; this.dmg[i] = this.dmg[last]; this.aoe[i] = this.aoe[last];
       this.trailAcc[i] = this.trailAcc[last];
+      this.homing[i] = this.homing[last];
       // move the matrix too, or the swapped-in missile renders a stale ghost for a frame
       const m = this.mesh.instanceMatrix.array as Float32Array;
       m.copyWithin(i * 16, last * 16, last * 16 + 16);
@@ -355,20 +359,23 @@ export class Missiles {
   }
 
   update(dt: number, swarm: Swarm, grid: SpatialGrid, particles: Particles, onBoom: (x: number, z: number) => void): void {
-    const { px, pz, vx, vz, life, dmg, aoe, speed } = this;
+    const { px, pz, vx, vz, life, dmg, aoe, speed, homing } = this;
     const m = this.mesh.instanceMatrix.array as Float32Array;
     for (let i = this.count - 1; i >= 0; i--) {
       life[i] -= dt;
-      // home toward the nearest enemy (limited turn)
+      // find the nearest enemy: homing rockets steer toward it; dumb rockets only
+      // use it for the proximity-detonation check (they fly straight).
       const tgt = this.nearestNear(px[i], pz[i], swarm, grid);
       if (tgt >= 0) {
         const dx = swarm.posX[tgt] - px[i], dz = swarm.posZ[tgt] - pz[i];
         const d = Math.sqrt(dx * dx + dz * dz) + 1e-6;
-        const desiredX = (dx / d) * speed, desiredZ = (dz / d) * speed;
-        const turn = Math.min(1, dt * 6);
-        vx[i] += (desiredX - vx[i]) * turn;
-        vz[i] += (desiredZ - vz[i]) * turn;
-        // detonate on close approach
+        if (homing[i]) {
+          const desiredX = (dx / d) * speed, desiredZ = (dz / d) * speed;
+          const turn = Math.min(1, dt * 6);
+          vx[i] += (desiredX - vx[i]) * turn;
+          vz[i] += (desiredZ - vz[i]) * turn;
+        }
+        // detonate on close approach (both modes)
         if (d < swarm.radius[tgt] + 1.2) {
           this.detonate(px[i], pz[i], dmg[i], aoe[i], swarm, grid, particles, onBoom);
           this.remove(i);

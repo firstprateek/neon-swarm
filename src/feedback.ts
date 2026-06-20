@@ -17,6 +17,7 @@ export interface FeedbackCtx {
   deviceClass: 'mobile' | 'tablet' | 'desktop';
   viewport: string; dpr: number; locale?: string;
   mode: 'daily' | 'free'; dailyNum: number | null;
+  dailyMode: 'easy' | 'medium' | 'hard' | null; // control tier (daily only)
   seed: number; survivor: string; score: number;
   timeS: number; level: number; kills: number; comboPeak: number;
 }

@@ -1,5 +1,6 @@
 import type { GameState, Upgrade } from './state';
 import type { FeedbackInput, Rating, Category } from './feedback';
+import type { Difficulty } from './modes';
 
 function el<T extends HTMLElement = HTMLElement>(id: string): T {
   return document.getElementById(id) as T;
@@ -23,6 +24,8 @@ const goStats = el('go-stats');
 const pauseOverlay = el('pause-overlay');
 const avatarOverlay = el('avatar-overlay');
 const avatarCards = el('avatar-cards');
+const dailymodeOverlay = el('dailymode-overlay');
+const dailymodeCards = el('dailymode-cards');
 const bossWrap = el('boss-wrap');
 const bossFill = el('boss-fill');
 const bossWarn = el('boss-warn');
@@ -270,6 +273,8 @@ export function showStart(cfg: StartConfig): void {
     fn();
   };
   const keyHandler = (e: KeyboardEvent) => {
+    const so = document.getElementById('settings-overlay');
+    if (so && !so.classList.contains('hidden')) return; // settings open over the title — don't deploy
     if (cfg.challengeSeed != null) {
       if (e.code === 'Space' || e.code === 'Enter') choose(cfg.onFreePlay);
     } else if (e.code === 'KeyF') {
@@ -372,6 +377,43 @@ export function showAvatarSelect(avatars: AvatarCard[], current: number, onPick:
   avatarOverlay.classList.remove('hidden');
 }
 
+export interface DailyModeCard { mode: Difficulty; label: string; tag: string; best: number }
+
+/** daily mode picker — mirrors showAvatarSelect (1-3 / arrows / Enter / click) */
+export function showDailyModeSelect(dailyNum: number, cards: DailyModeCard[], current: Difficulty, onPick: (m: Difficulty) => void): void {
+  let sel = cards.findIndex(c => c.mode === current);
+  if (sel < 0) sel = 0;
+  dailymodeCards.innerHTML = '';
+  el('dailymode-title').textContent = `☀ DAILY #${dailyNum} — CHOOSE A MODE`;
+  const els = cards.map((c, i) => {
+    const card = document.createElement('div');
+    card.className = 'avatar-card dailymode-card';
+    card.innerHTML =
+      `<div class="dm-label">${c.label}</div>` +
+      `<div class="avatar-trait">${c.tag}</div>` +
+      `<div class="dm-best">${c.best > 0 ? 'your best ' + c.best.toLocaleString() : 'not played yet'}</div>`;
+    card.addEventListener('click', () => { sel = i; commit(); });
+    dailymodeCards.appendChild(card);
+    return card;
+  });
+  const highlight = () => els.forEach((c, i) => c.classList.toggle('selected', i === sel));
+  const commit = () => {
+    window.removeEventListener('keydown', keyHandler);
+    dailymodeOverlay.classList.add('hidden');
+    onPick(cards[sel].mode);
+  };
+  const keyHandler = (e: KeyboardEvent) => {
+    const n = Number(e.key);
+    if (n >= 1 && n <= cards.length) { sel = n - 1; highlight(); }
+    else if (e.code === 'ArrowRight') { sel = (sel + 1) % cards.length; highlight(); }
+    else if (e.code === 'ArrowLeft') { sel = (sel - 1 + cards.length) % cards.length; highlight(); }
+    else if (e.code === 'Enter' || e.code === 'Space') commit();
+  };
+  window.addEventListener('keydown', keyHandler);
+  highlight();
+  dailymodeOverlay.classList.remove('hidden');
+}
+
 export function showPause(): void { pauseOverlay.classList.remove('hidden'); }
 export function hidePause(): void { pauseOverlay.classList.add('hidden'); }
 export function isPauseOpen(): boolean { return !pauseOverlay.classList.contains('hidden'); }
@@ -381,7 +423,7 @@ export interface RunInfo {
   seed: number;
   shareUrl: string;
   /** present when the run was today's Daily Challenge */
-  daily?: { num: number; best: number; isBest: boolean } | null;
+  daily?: { num: number; mode: Difficulty; best: number; isBest: boolean } | null;
   /** receives a feedback submission from the game-over panel */
   onFeedback?: (input: FeedbackInput) => void;
 }
@@ -393,7 +435,7 @@ export function showGameOver(state: GameState, info: RunInfo): void {
   const peakMult = (1 + Math.min(state.comboPeak, 40) * 0.1).toFixed(1);
   const daily = info.daily;
 
-  el('brag-label').textContent = daily ? `☀ DAILY #${daily.num}` : 'NEON SWARM';
+  el('brag-label').textContent = daily ? `☀ DAILY #${daily.num} · ${daily.mode.toUpperCase()}` : 'NEON SWARM';
   el('brag-score').textContent = state.score.toLocaleString();
   el('brag-sub').textContent = `${info.survivor} · PEAK ×${peakMult}`;
 

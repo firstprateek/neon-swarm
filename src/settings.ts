@@ -3,15 +3,28 @@
  * (validated + clamped) keep this testable; load/save wrap storage in try/catch
  * so a blocked localStorage can never break startup.
  */
+import { type KeyMap, defaultKeys, mergeKeys } from './keybind';
+import { type Difficulty, coerceDifficulty, presetFlags } from './modes';
+
 export type QualityMode = 'auto' | 'ultra' | 'high' | 'medium' | 'low';
 
 export interface Settings {
+  // video
   quality: QualityMode;
   bloom: boolean;
-  sound: boolean;
-  volume: number; // 0..100
   fps: number;    // one of FPS_CHOICES
-  avatar: number; // chosen survivor index
+  // audio
+  sound: boolean;
+  volume: number; // 0..100 effects
+  music: number;  // 0..100 music channel (reserved)
+  // controls — SOURCE OF TRUTH, read directly in the fire path
+  autoFire: boolean;    // ON => gun auto-fires (today). OFF => press FIRE per round.
+  gunLock: boolean;     // ON => gun auto-aims nearest (today). OFF => fires toward facing.
+  missileLock: boolean; // ON => missile homes + aims nearest. OFF => dumb-fire toward facing.
+  // misc
+  avatar: number;        // chosen survivor index
+  keybinds: KeyMap;      // remappable desktop bindings
+  dailyMode: Difficulty; // last-used daily preset, remembered for the mode picker
 }
 
 const KEY = 'neon-swarm-settings';
@@ -21,8 +34,17 @@ export const QUALITY_CHOICES: QualityMode[] = ['auto', 'ultra', 'high', 'medium'
 export const AVATAR_COUNT = 4;
 
 export function defaultSettings(): Settings {
-  return { quality: 'auto', bloom: true, sound: true, volume: 45, fps: 120, avatar: 0 };
+  return {
+    quality: 'auto', bloom: true, fps: 120,
+    sound: true, volume: 45, music: 35,
+    autoFire: true, gunLock: true, missileLock: true, // == EASY (today's behavior)
+    avatar: 0, keybinds: defaultKeys(), dailyMode: 'easy',
+  };
 }
+
+const clamp01 = (v: unknown, dv: number) =>
+  typeof v === 'number' && isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : dv;
+const bool = (v: unknown, dv: boolean) => (typeof v === 'boolean' ? v : dv);
 
 /** validate/clamp arbitrary input into a complete Settings (used by load + tests) */
 export function mergeSettings(raw: unknown): Settings {
@@ -31,12 +53,23 @@ export function mergeSettings(raw: unknown): Settings {
   const r = raw as Record<string, unknown>;
   return {
     quality: QUALITY_CHOICES.includes(r.quality as QualityMode) ? (r.quality as QualityMode) : d.quality,
-    bloom: typeof r.bloom === 'boolean' ? r.bloom : d.bloom,
-    sound: typeof r.sound === 'boolean' ? r.sound : d.sound,
-    volume: typeof r.volume === 'number' && isFinite(r.volume) ? Math.max(0, Math.min(100, Math.round(r.volume))) : d.volume,
+    bloom: bool(r.bloom, d.bloom),
     fps: FPS_CHOICES.includes(r.fps as number) ? (r.fps as number) : d.fps,
+    sound: bool(r.sound, d.sound),
+    volume: clamp01(r.volume, d.volume),
+    music: clamp01(r.music, d.music),
+    autoFire: bool(r.autoFire, d.autoFire),
+    gunLock: bool(r.gunLock, d.gunLock),
+    missileLock: bool(r.missileLock, d.missileLock),
     avatar: typeof r.avatar === 'number' && r.avatar >= 0 && r.avatar < AVATAR_COUNT ? (r.avatar | 0) : d.avatar,
+    keybinds: mergeKeys(r.keybinds),
+    dailyMode: coerceDifficulty(r.dailyMode),
   };
+}
+
+/** stamp a difficulty preset's control flags onto a settings object (in place) */
+export function applyPreset(s: Settings, d: Difficulty): void {
+  Object.assign(s, presetFlags(d));
 }
 
 export function loadSettings(): Settings {

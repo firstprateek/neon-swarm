@@ -18,6 +18,8 @@ export interface TouchControls {
   show(): void;
   hide(): void;
   setAbilityState(missiles: number, nukes: number, dashReady: boolean): void;
+  setFireVisible(on: boolean): void; // show the FIRE button (auto-fire OFF only)
+  isFiring(): boolean;               // true ONLY while the FIRE button is visible AND held
   el: HTMLElement; // exposed for tests
 }
 
@@ -108,6 +110,20 @@ export function createTouch(deps: TouchDeps): TouchControls {
   wire(bNuke, deps.fireNuke);
   wire(bDash, deps.doDash);
 
+  // ---- FIRE button (held = sustained fire; only shown when auto-fire is OFF) ----
+  const bFire = document.getElementById('tc-fire') as HTMLButtonElement;
+  let fireVisible = false, firingHeld = false;
+  const fireDown = (e: PointerEvent): void => {
+    e.preventDefault(); e.stopPropagation(); // never also start the joystick
+    bFire.classList.add('down'); firingHeld = true;
+    try { bFire.setPointerCapture(e.pointerId); } catch { /* fast-tap race */ }
+  };
+  const fireUp = (): void => { firingHeld = false; bFire.classList.remove('down'); };
+  bFire.addEventListener('pointerdown', fireDown, { passive: false });
+  bFire.addEventListener('pointerup', fireUp);
+  bFire.addEventListener('pointercancel', fireUp);
+  bFire.addEventListener('pointerleave', fireUp);
+
   // dirty-check cache (per-frame call; avoid layout churn like hud.ts)
   const lastState = { m: -2, n: -2, d: -2 };
 
@@ -121,8 +137,15 @@ export function createTouch(deps: TouchDeps): TouchControls {
         stick.classList.remove('live');
         knob.style.transform = 'translate(0,0)';
       }
+      firingHeld = false; bFire.classList.remove('down');
       clearTouchMove(); // MUST clear, or a stale vector drifts the player under an overlay
     },
+    setFireVisible(on: boolean): void {
+      fireVisible = on;
+      bFire.classList.toggle('tc-hidden', !on);
+      if (!on) firingHeld = false;
+    },
+    isFiring(): boolean { return fireVisible && firingHeld; },
     setAbilityState(missiles, nukes, dashReady): void {
       if (missiles !== lastState.m) {
         lastState.m = missiles;

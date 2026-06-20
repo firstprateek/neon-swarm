@@ -21,20 +21,33 @@ Pick **☀ Daily Challenge** or **▶ Free Play**, choose a survivor, then survi
 
 | Input | Action |
 | --- | --- |
-| `WASD` / arrows | Move (weapons auto-fire at the nearest enemy) |
-| `Space` | **Missile** — homing AoE rocket (limited, refills over time) |
+| `WASD` / arrows | Move (and aim — the survivor faces where you move) |
+| `Space` | **Fire** the gun (only needed when auto-fire is off) |
+| `E` | **Missile** — AoE rocket (limited, refills over time) |
 | `Q` | **Nuke** — clears the screen (very limited) |
 | `Shift` | **Dash** — short burst with i-frames (cooldown) |
-| `Esc` | Pause / settings (quality, audio) |
+| `Esc` | Pause / settings |
 | `M` | Mute |
 
-Collect green XP gems, pick an upgrade on each level-up, and push your score. Bigger enemies are worth more; chaining kills builds a score **combo** multiplier. Bosses arrive on a timer and drop ammo restocks.
+All gameplay keys are **remappable** in Settings. Collect green XP gems, pick an upgrade on each level-up, and push your score. Bigger enemies are worth more; chaining kills builds a score **combo** multiplier. Bosses arrive on a timer and drop ammo restocks.
 
-**On mobile/touch** (auto-detected): a floating analog joystick on the bottom-right moves you (push further = faster), and three ability buttons on the bottom-left fire **nuke / missile / dash**. Weapons still auto-fire. Add `?touch` to force the on-screen controls on a desktop browser.
+**On mobile/touch** (auto-detected): a floating analog joystick on the bottom-right moves you (push further = faster), and ability buttons on the bottom-left fire **nuke / missile / dash** (plus a **FIRE** button when auto-fire is off). Add `?touch` to force the on-screen controls on a desktop browser.
+
+## Control modes
+
+Pick how much the game helps you aim and fire — set a preset (or flip the toggles individually) in **Settings**:
+
+| Mode | Auto-fire | Gun aim | Missile |
+| --- | --- | --- | --- |
+| **Easy** | on | auto-locks nearest | homes |
+| **Medium** | on | follows your facing | fires where you face |
+| **Hard** | off (hold Fire) | follows your facing | fires where you face |
+
+In **Free Play** you can change controls anytime. In a **Daily Challenge** you choose the mode at the start and it's locked for that run — and **each mode has its own leaderboard** (an Easy score isn't compared against a Hard one).
 
 ## Game modes & the share loop
 
-- **☀ Daily Challenge** — one global seed per UTC day (everyone on Earth plays the *identical* run), with a local per-day personal best. Score is skill, not luck.
+- **☀ Daily Challenge** — one global seed per UTC day (everyone on Earth plays the *identical* run), with a local per-day personal best **per control mode**. Score is skill, not luck.
 - **▶ Free Play** — a fresh random run every time.
 - **Challenge a friend** — the game-over "brag card" copies a `?seed=…` link. Opening it drops your friend into the **byte-identical** run to beat your score. The whole sim is deterministic (seeded PRNG), so the same seed + same inputs always replays exactly.
 
@@ -59,6 +72,7 @@ URL params (append e.g. `?webgl`):
 - `?quality=N` — pin a quality tier and disable the adaptive governor (`-1` = auto)
 - `?mute` — start muted
 - `?touch` — force-enable the on-screen touch controls (joystick + ability buttons) on a desktop browser
+- `?mode=easy|medium|hard` — on a challenge link, replays the same control mode the sharer used
 
 Other:
 

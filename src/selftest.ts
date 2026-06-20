@@ -14,7 +14,9 @@ import { setSeed, srand, getSeed, clearSeed } from './rng';
 import { dailySeed, dailyNumber, dailyKey, secondsToNextDaily, getDailyBest, recordDailyScore } from './daily';
 import { createQuality, governQuality, MAX_TIER } from './perf';
 import * as sfx from './sfx';
-import { defaultSettings, mergeSettings, qualityTier } from './settings';
+import { defaultSettings, mergeSettings, qualityTier, applyPreset } from './settings';
+import { presetFlags, flagsToPreset, coerceDifficulty } from './modes';
+import { defaultKeys, mergeKeys, KEY_ACTIONS, resolveAction, isDown, keyLabel, isBindable } from './keybind';
 import { AVATARS, makeSurvivor } from './avatars';
 import { createState, grantXp, xpForLevel, rollUpgrades, registerKill, tickCombo, comboMultiplier, SCORE_BY_TYPE, UPGRADES } from './state';
 import { getMove, setTouchMove, clearTouchMove } from './input';
@@ -256,6 +258,21 @@ function run(): void {
       ms.update(1 / 60, sw, g, part, () => { boomed = true; });
     }
     check('missiles: homes, detonates, AoE damages enemies', sw.hp[0] < 28 && sw.hp[1] < 3 && boomed && ms.count === 0, `hp0=${sw.hp[0]} hp1=${sw.hp[1]} boom=${boomed} count=${ms.count}`);
+
+    // an enemy in seek range but OFF the +X flight axis (won't be reached in 6 frames)
+    const sw2 = new Swarm(8, scene);
+    sw2.spawn(0, 2, 5); // grunt up-and-right; within the rocket's grid-local seek range
+    const g2 = new SpatialGrid(2.5, 64, 8);
+    // dumb-fire (homing OFF): the off-axis enemy must NOT bend the rocket — it flies straight +X
+    const ms2 = new Missiles(8, scene);
+    ms2.fire(0, 0, 1, 0, 55, 6.5, false);
+    for (let t = 0; t < 6; t++) { g2.build(sw2.posX, sw2.posZ, sw2.count, 0, 0); ms2.update(1 / 60, sw2, g2, part, () => {}); }
+    check('missiles: dumb-fire flies straight (ignores off-axis enemy)', Math.abs(ms2.vz[0]) < 1e-3 && ms2.vx[0] > 0, `vx=${ms2.vx[0].toFixed(2)} vz=${ms2.vz[0].toFixed(2)}`);
+    // homing ON: the same enemy bends the rocket toward it (vz grows positive)
+    const ms3 = new Missiles(8, scene);
+    ms3.fire(0, 0, 1, 0, 55, 6.5, true);
+    for (let t = 0; t < 6 && ms3.count > 0; t++) { g2.build(sw2.posX, sw2.posZ, sw2.count, 0, 0); ms3.update(1 / 60, sw2, g2, part, () => {}); }
+    check('missiles: homing seeks toward an off-axis enemy', ms3.vz[0] > 0.5, `vz=${ms3.vz[0].toFixed(2)}`);
   }
 
   // ---------- Nuke blast FX ----------
@@ -288,22 +305,61 @@ function run(): void {
     window.dispatchEvent(new Event('blur'));
   }
 
-  // ---------- Touch controls ----------
+  // ---------- Touch controls (mobile-view SMOKE: ensure nothing broke) ----------
   {
     let m = 0, n = 0, d = 0;
-    const tc = createTouch({ fireMissile: () => m++, fireNuke: () => n++, doDash: () => d++, canAct: () => true });
-    document.getElementById('tc-missile')!.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 9, bubbles: true }));
-    check('touch: missile button fires the closure once', m === 1, String(m));
+    // 1. the layer builds without throwing (a missing #tc-fire node would crash the whole suite)
+    let built = true; let tc!: ReturnType<typeof createTouch>;
+    try { tc = createTouch({ fireMissile: () => m++, fireNuke: () => n++, doDash: () => d++, canAct: () => true }); }
+    catch { built = false; }
+    check('touch(smoke): control layer builds without throwing', built);
+
+    // 2-4. each ability button still fires its closure once
+    const tap = (id: string, pid: number) => document.getElementById(id)!.dispatchEvent(new PointerEvent('pointerdown', { pointerId: pid, bubbles: true }));
+    tap('tc-missile', 9); check('touch(smoke): missile button fires', m === 1, String(m));
+    tap('tc-nuke', 10); check('touch(smoke): nuke button fires', n === 1, String(n));
+    tap('tc-dash', 11); check('touch(smoke): dash button fires', d === 1, String(d));
+    document.getElementById('tc-missile')!.dispatchEvent(new PointerEvent('pointerup', { pointerId: 9, bubbles: true }));
+
+    // 5-6. joystick drag produces an analog move vector; release clears it
+    clearTouchMove();
+    const zone = document.getElementById('tc-stick-zone')!;
+    zone.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, clientX: 240, clientY: 600, bubbles: true }));
+    zone.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 268, clientY: 626, bubbles: true }));
+    check('touch(smoke): joystick drag moves the player', Math.hypot(getMove().x, getMove().z) > 0);
+    zone.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 268, clientY: 626, bubbles: true }));
+    check('touch(smoke): joystick release clears the vector', getMove().x === 0 && getMove().z === 0);
+
+    // 7-8. show()/hide(); hide clears any stray vector
     tc.show();
-    check('touch: show() activates the layer', document.getElementById('touch-layer')!.classList.contains('active'));
-    setTouchMove(0.4, 0.4);
-    tc.hide();
-    check('touch: hide() clears the move vector', getMove().x === 0 && getMove().z === 0);
+    check('touch(smoke): show() activates the layer', document.getElementById('touch-layer')!.classList.contains('active'));
+    setTouchMove(0.4, 0.4); tc.hide();
+    check('touch(smoke): hide() clears the move vector', getMove().x === 0 && getMove().z === 0);
+
+    // 9. empty ability state marks the buttons
     tc.setAbilityState(0, 0, false);
-    check('touch: empty state marks all three buttons',
+    check('touch(smoke): empty state marks all three buttons',
       document.getElementById('tc-missile')!.classList.contains('tc-empty') &&
       document.getElementById('tc-nuke')!.classList.contains('tc-empty') &&
       document.getElementById('tc-dash')!.classList.contains('tc-empty'));
+
+    // 10-13. the FIRE button: only fires when visible+held; never leaks a move vector
+    tc.setFireVisible(false);
+    document.getElementById('tc-fire')!.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 5, bubbles: true }));
+    check('touch(smoke): FIRE no-ops while hidden', tc.isFiring() === false);
+    document.getElementById('tc-fire')!.dispatchEvent(new PointerEvent('pointerup', { pointerId: 5, bubbles: true }));
+    tc.setFireVisible(true);
+    clearTouchMove();
+    document.getElementById('tc-fire')!.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 6, bubbles: true }));
+    check('touch(smoke): FIRE held + visible => isFiring, no stray move', tc.isFiring() === true && getMove().x === 0 && getMove().z === 0);
+    document.getElementById('tc-fire')!.dispatchEvent(new PointerEvent('pointerup', { pointerId: 6, bubbles: true }));
+    check('touch(smoke): FIRE release stops firing', tc.isFiring() === false);
+    document.getElementById('tc-fire')!.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 7, bubbles: true }));
+    tc.hide();
+    check('touch(smoke): hide() while firing stops fire', tc.isFiring() === false);
+
+    // 14. settings reachable: the pause overlay exists with a hidden class to toggle
+    check('touch(smoke): pause overlay present for the gear', !!document.getElementById('pause-overlay'));
   }
 
   // ---------- Feedback queue ----------
@@ -311,7 +367,7 @@ function run(): void {
     localStorage.removeItem('ns-feedback-queue');
     const ctx = {
       appVersion: '0.1.0', backend: 'webgl2', deviceClass: 'mobile', viewport: '390x844',
-      dpr: 3, mode: 'free', dailyNum: null, seed: 42, survivor: 'VEX', score: 100, timeS: 30,
+      dpr: 3, mode: 'free', dailyNum: null, dailyMode: null, seed: 42, survivor: 'VEX', score: 100, timeS: 30,
       level: 3, kills: 50, comboPeak: 7,
     } as FeedbackCtx;
     submitFeedback({ rating: 4, category: 'bug', text: 'x'.repeat(400) }, ctx);
@@ -423,14 +479,17 @@ function run(): void {
     check('daily: #1 is the 2026-06-01 epoch', dailyNumber(Date.UTC(2026, 5, 1, 0, 0)) === 1, String(dailyNumber(Date.UTC(2026, 5, 1))));
     check('daily: number advances one per day', dailyNumber(t) === 20, String(dailyNumber(t)));
     check('daily: countdown within a day', secondsToNextDaily(t) > 0 && secondsToNextDaily(t) <= 86400);
-    // local best round-trips and only rises
+    // local best round-trips and only rises — PER MODE
     const k = 999001; // fixed test daily-number, far from any real one
-    localStorage.removeItem(`ns-daily-best-${k}`);
-    check('daily: unplayed best is 0', getDailyBest(k) === 0);
-    check('daily: first score sets a new best', recordDailyScore(k, 500) === true && getDailyBest(k) === 500);
-    check('daily: lower score does not lower best', recordDailyScore(k, 300) === false && getDailyBest(k) === 500);
-    check('daily: higher score raises best', recordDailyScore(k, 900) === true && getDailyBest(k) === 900);
-    localStorage.removeItem(`ns-daily-best-${k}`);
+    for (const m of ['easy', 'medium', 'hard'] as const) localStorage.removeItem(`ns-daily-best-${k}-${m}`);
+    check('daily: unplayed best is 0', getDailyBest(k, 'easy') === 0);
+    check('daily: first score sets a new best', recordDailyScore(k, 'easy', 500) === true && getDailyBest(k, 'easy') === 500);
+    check('daily: lower score does not lower best', recordDailyScore(k, 'easy', 300) === false && getDailyBest(k, 'easy') === 500);
+    check('daily: higher score raises best', recordDailyScore(k, 'easy', 900) === true && getDailyBest(k, 'easy') === 900);
+    // easy / medium / hard are INDEPENDENT boards
+    recordDailyScore(k, 'hard', 1200);
+    check('daily: modes are independent leaderboards', getDailyBest(k, 'easy') === 900 && getDailyBest(k, 'hard') === 1200 && getDailyBest(k, 'medium') === 0);
+    for (const m of ['easy', 'medium', 'hard'] as const) localStorage.removeItem(`ns-daily-best-${k}-${m}`);
   }
 
   // ---------- Director / difficulty ----------
@@ -577,6 +636,40 @@ function run(): void {
     check('settings: default avatar is 0', defaultSettings().avatar === 0);
     check('settings: out-of-range avatar falls back', mergeSettings({ avatar: 99 }).avatar === 0 && mergeSettings({ avatar: -1 }).avatar === 0);
     check('settings: valid avatar preserved', mergeSettings({ avatar: 2 }).avatar === 2);
+    // control flags default to EASY (today's behavior, zero change for existing players)
+    check('settings: control flags default EASY', d.autoFire === true && d.gunLock === true && d.missileLock === true && d.music === 35 && d.dailyMode === 'easy');
+    check('settings: garbage control flags fall back to true', (() => { const g = mergeSettings({ autoFire: 'x', gunLock: 1, missileLock: null }); return g.autoFire && g.gunLock && g.missileLock; })());
+    check('settings: valid control flags preserved', (() => { const g = mergeSettings({ autoFire: false, gunLock: false, missileLock: true }); return g.autoFire === false && g.gunLock === false && g.missileLock === true; })());
+    check('settings: music clamps 0..100', mergeSettings({ music: 250 }).music === 100 && mergeSettings({ music: -5 }).music === 0);
+    check('settings: merge round-trips defaults (no missing/extra field)', JSON.stringify(mergeSettings(defaultSettings())) === JSON.stringify(d));
+  }
+
+  // ---------- Modes / presets ----------
+  {
+    check('modes: presetFlags(easy) all auto', JSON.stringify(presetFlags('easy')) === JSON.stringify({ autoFire: true, gunLock: true, missileLock: true }));
+    check('modes: medium = autofire on, aim manual', JSON.stringify(presetFlags('medium')) === JSON.stringify({ autoFire: true, gunLock: false, missileLock: false }));
+    check('modes: hard = fully manual', JSON.stringify(presetFlags('hard')) === JSON.stringify({ autoFire: false, gunLock: false, missileLock: false }));
+    check('modes: flagsToPreset round-trips', flagsToPreset(presetFlags('medium')) === 'medium' && flagsToPreset(presetFlags('hard')) === 'hard' && flagsToPreset(presetFlags('easy')) === 'easy');
+    check('modes: hand-tuned flags => null preset', flagsToPreset({ autoFire: true, gunLock: false, missileLock: true }) === null);
+    check('modes: coerceDifficulty whitelists', coerceDifficulty('junk') === 'easy' && coerceDifficulty('hard') === 'hard');
+    const sp = mergeSettings(null); applyPreset(sp, 'hard');
+    check('modes: applyPreset stamps flags', sp.autoFire === false && sp.gunLock === false && sp.missileLock === false);
+  }
+
+  // ---------- Keybind ----------
+  {
+    const dk = defaultKeys();
+    check('keybind: 8 actions, no dup codes, fire=Space', KEY_ACTIONS.length === 8 && new Set(Object.values(dk)).size === 8 && dk.fire === 'Space' && dk.missile === 'KeyE');
+    check('keybind: mergeKeys(null) = defaults', JSON.stringify(mergeKeys(null)) === JSON.stringify(dk));
+    check('keybind: unknown action keys dropped, valid kept', mergeKeys({ fire: 'KeyF', bogus: 'KeyZ' }).fire === 'KeyF');
+    check('keybind: reserved/non-bindable rejected', mergeKeys({ fire: 'Escape' }).fire === 'Space' && mergeKeys({ moveUp: 'ArrowUp' }).moveUp === 'KeyW' && mergeKeys({ nuke: '' }).nuke === 'KeyQ');
+    const repaired = mergeKeys({ fire: 'KeyQ' }); // collides with nuke(KeyQ)
+    check('keybind: collisions repaired (no dup)', new Set(Object.values(repaired)).size === 8);
+    check('keybind: resolveAction maps codes', resolveAction(dk, 'KeyE') === 'missile' && resolveAction(dk, 'Space') === 'fire' && resolveAction(dk, 'KeyZ') === null);
+    check('keybind: isDown reads held set', isDown(dk, new Set(['KeyW']), 'moveUp') === true && isDown(dk, new Set(['KeyW']), 'fire') === false);
+    check('keybind: keyLabel formats', keyLabel('KeyW') === 'W' && keyLabel('Space') === 'SPACE' && keyLabel('ShiftLeft') === 'L-SHIFT');
+    check('keybind: isBindable guards', isBindable('Escape') === false && isBindable('ArrowUp') === false && isBindable('KeyF') === true);
+    check('keybind: mergeSettings carries a valid rebind', mergeSettings({ keybinds: { fire: 'KeyF' } }).keybinds.fire === 'KeyF');
   }
 
   // ---------- Avatar select ----------
@@ -730,13 +823,13 @@ function run(): void {
     check('hud: non-daily run hides daily badge + label', document.getElementById('brag-label')!.textContent === 'NEON SWARM' &&
       document.getElementById('brag-daily')!.classList.contains('hidden'));
 
-    hud.showGameOver(s, { survivor: 'MEDIC', seed: 99, shareUrl: 'https://x/?seed=99', daily: { num: 12, best: 123456, isBest: true } });
-    check('hud: daily game-over shows DAILY label + NEW BEST',
-      document.getElementById('brag-label')!.textContent === '☀ DAILY #12' &&
+    hud.showGameOver(s, { survivor: 'MEDIC', seed: 99, shareUrl: 'https://x/?seed=99', daily: { num: 12, mode: 'hard', best: 123456, isBest: true } });
+    check('hud: daily game-over shows DAILY label + mode + NEW BEST',
+      document.getElementById('brag-label')!.textContent === '☀ DAILY #12 · HARD' &&
       !document.getElementById('brag-daily')!.classList.contains('hidden') &&
       document.getElementById('brag-daily')!.classList.contains('newbest') &&
       document.getElementById('brag-daily')!.textContent!.includes('NEW DAILY BEST'));
-    hud.showGameOver(s, { survivor: 'MEDIC', seed: 99, shareUrl: 'https://x/?seed=99', daily: { num: 12, best: 200000, isBest: false } });
+    hud.showGameOver(s, { survivor: 'MEDIC', seed: 99, shareUrl: 'https://x/?seed=99', daily: { num: 12, mode: 'easy', best: 200000, isBest: false } });
     check('hud: daily non-best shows standing best, no blink',
       !document.getElementById('brag-daily')!.classList.contains('newbest') &&
       document.getElementById('brag-daily')!.textContent!.includes('200,000'));
