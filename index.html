@@ -166,6 +166,14 @@
     .brag-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; font-size: 13px; color: #a8ccd6; text-align: left; }
     .brag-grid b { color: var(--accent); float: right; }
     .brag-seed { font-size: 11px; letter-spacing: 2px; color: #5f8a96; margin-top: 14px; }
+    .brag-global { width: 340px; max-width: 88vw; margin-top: 10px; padding: 12px 16px;
+      background: rgba(30,22,8,0.55); border: 1px solid rgba(255,200,74,0.4); text-align: center; }
+    .brag-global.hidden { display: none; }
+    .bg-title { font-size: 11px; letter-spacing: 4px; color: #ffd24a; margin-bottom: 6px; }
+    .bg-top { font-size: 14px; color: #eaffff; }
+    .bg-rank { font-size: 16px; letter-spacing: 2px; color: #ffd24a; text-shadow: 0 0 12px #ffb020; margin-top: 6px; }
+    .bg-streak { font-size: 12px; color: #ff8a3a; margin-top: 4px; }
+    .bg-rival { font-size: 12px; color: #ff8af0; margin-top: 4px; }
     .brag-daily { font-size: 13px; letter-spacing: 3px; color: #ffd24a; margin: -6px 0 14px; }
     .brag-daily.newbest { color: #44ff99; text-shadow: 0 0 14px rgba(68,255,153,0.6); animation: blink 1s infinite; }
     .gostats { font-size: 15px; line-height: 2.1; text-align: center; color: #a8ccd6; }
@@ -354,6 +362,7 @@
       <div class="brag-grid" id="go-stats"></div>
       <div class="brag-seed" id="brag-seed"></div>
     </div>
+    <div id="brag-global" class="brag-global hidden"></div>
     <div id="feedback-panel" class="hidden">
       <div class="fb-q">HOW WAS THAT RUN?</div>
       <div class="fb-emoji">

@@ -426,6 +426,10 @@ export interface RunInfo {
   daily?: { num: number; mode: Difficulty; best: number; isBest: boolean } | null;
   /** receives a feedback submission from the game-over panel */
   onFeedback?: (input: FeedbackInput) => void;
+  /** fired when the player shares (for telemetry) — no-op when the backend is off */
+  onShare?: (method: 'web_share' | 'clipboard') => void;
+  /** async global-leaderboard fetch (daily only); resolves null when the backend is off */
+  onBoard?: () => Promise<import('./leaderboard').Board | null>;
 }
 
 export function showGameOver(state: GameState, info: RunInfo): void {
@@ -466,12 +470,14 @@ export function showGameOver(state: GameState, info: RunInfo): void {
       const nav = navigator as Navigator & { share?: (d: { text: string }) => Promise<void> };
       if (nav.share) {
         await nav.share({ text: shareText });
+        info.onShare?.('web_share');
       } else {
         await navigator.clipboard.writeText(shareText);
         shareBtn.textContent = '✓ LINK COPIED!';
+        info.onShare?.('clipboard');
       }
     } catch {
-      try { await navigator.clipboard.writeText(shareText); shareBtn.textContent = '✓ LINK COPIED!'; } catch { /* ignore */ }
+      try { await navigator.clipboard.writeText(shareText); shareBtn.textContent = '✓ LINK COPIED!'; info.onShare?.('clipboard'); } catch { /* ignore */ }
     }
   };
   el<HTMLButtonElement>('restart-btn').onclick = () => location.reload();
@@ -500,6 +506,27 @@ export function showGameOver(state: GameState, info: RunInfo): void {
   panel.querySelectorAll<HTMLButtonElement>('.fb-cats button').forEach(b =>
     b.onclick = () => { category = b.dataset.c as Category; selGroup('fb-cats', 'data-c', b.dataset.c!); });
   el<HTMLButtonElement>('fb-send').onclick = () => send(rating);
+
+  // global leaderboard rank (daily + backend on) — render the card NOW, patch the
+  // global section in async when the fetch lands. Hidden/empty when the backend is off.
+  const slot = el('brag-global');
+  slot.className = 'brag-global hidden';
+  slot.innerHTML = '';
+  if (info.onBoard) {
+    info.onBoard().then(b => {
+      if (!b || !b.top.length) return;
+      const top1 = b.top[0];
+      const rival = b.your_rank && b.your_rank > 1 ? b.top[b.your_rank - 2] : null;
+      slot.classList.remove('hidden');
+      slot.innerHTML =
+        `<div class="bg-title">☀ TODAY'S GLOBAL TOP · ${b.mode.toUpperCase()}</div>` +
+        `<div class="bg-top">#1 ${top1.handle ?? 'Anon'} — ${top1.score.toLocaleString()}</div>` +
+        (b.your_rank ? `<div class="bg-rank">YOU'RE #${b.your_rank.toLocaleString()} of ${b.total.toLocaleString()}</div>` : '') +
+        (b.streak && b.streak > 1 ? `<div class="bg-streak">🔥 ${b.streak}-day streak</div>` : '') +
+        (rival ? `<div class="bg-rival">⚔ Beat @${rival.handle ?? 'Anon'} by ${(rival.score - state.score).toLocaleString()}</div>` : '');
+      if (b.your_rank) shareBtn.textContent = `⚔ BRAG MY RANK #${b.your_rank}`;
+    }).catch(() => { /* ignore */ });
+  }
 
   gameoverOverlay.classList.remove('hidden');
 }

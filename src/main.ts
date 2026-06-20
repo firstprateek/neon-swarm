@@ -20,6 +20,10 @@ import { createQuality, governQuality, QUALITY_TIERS, MAX_TIER } from './perf';
 import { loadSettings, saveSettings, qualityTier, applyPreset, clampZoom, type Settings, type QualityMode } from './settings';
 import { AVATARS, makeSurvivor } from './avatars';
 import { setSeed, getSeed, randomSeed, srand } from './rng';
+import { TELEMETRY_ENDPOINT } from './config';
+import { track, initTelemetry, wireTelemetryLifecycle } from './telemetry';
+import { submitScore, flushScores, beaconFlushScores, fetchBoard } from './leaderboard';
+import { normNote, dprBucket, screenTier, refAllow, hostOnly, rotShareToken } from './telemetry-helpers';
 import { dailySeed, dailyNumber, getDailyBest, recordDailyScore } from './daily';
 import * as sfx from './sfx';
 import * as hud from './hud';
@@ -87,11 +91,21 @@ async function presentsBlack(
   return sum === 0;
 }
 
+// §0 telemetry module state (consumed only when the backend flag is on; inert otherwise)
+const pageLoadT = performance.now(); // for ttfr_ms; must be before any await
+let runsThisSession = 0;             // run_index
+let runTainted = false;             // flipped by any cheat / debug poke
+
 async function start() {
   const params = new URLSearchParams(location.search);
   const forceGL = params.has('webgl'); // force the WebGL2 backend
   const pinGPU = params.has('webgpu'); // trust WebGPU, skip the watchdog probe
   const noBloom = params.has('nobloom');
+
+  // backend telemetry boot (all no-ops when the flag is off)
+  initTelemetry();
+  wireTelemetryLifecycle();
+  track('page_view', { referrer_host: refAllow(hostOnly(document.referrer)), utm: params.get('utm_source'), has_seed: params.has('seed') });
 
   // persisted player settings; URL params still override below
   const settings = loadSettings();
@@ -113,6 +127,7 @@ async function start() {
   setSeed(challengeSeed != null ? challengeSeed : randomSeed());
   // a challenge link can carry the control tier so it replays the same assist mode
   if (challengeSeed != null && params.has('mode')) applyPreset(settings, coerceDifficulty(params.get('mode')));
+  if (challengeSeed != null) track('challenge_open', { referrer_host: refAllow(hostOnly(document.referrer)), share_token: rotShareToken() });
   let isDaily = false; // current run is today's Daily Challenge
   let dailyNum = 0;
 
@@ -298,6 +313,11 @@ async function start() {
   if (pinnedTier >= 0) quality.tier = pinnedTier;
   applyQuality();
 
+  track('tech_profile', {
+    backend: onWebGPU() ? 'webgpu' : 'webgl2', backend_forced: normNote(backendNote), bloom_ok: !!post,
+    dpr_bucket: dprBucket(devicePixelRatio), screen_tier: screenTier(screen.width, screen.height), target_fps: targetFps,
+  });
+
   // size from visualViewport (handles the iOS dynamic toolbar) + the mobile DPR cap
   function applySize(): void {
     const [w, h] = viewportWH();
@@ -341,12 +361,22 @@ async function start() {
     started = true;
     touch?.setFireVisible(!settings.autoFire); // mobile FIRE button only when auto-fire is off
     sfx.initAudio();
+    runsThisSession++;
+    track('run_start', {
+      mode: isDaily ? dailyMode : 'free', survivor: AVATARS[idx].name,
+      daily_num: isDaily ? dailyNum : null, ttfr_ms: Math.round(performance.now() - pageLoadT),
+      backend: onWebGPU() ? 'webgpu' : 'webgl2',
+    });
   };
   // challenge link drops straight into the run; otherwise pick a survivor first
   const startRun = () => {
     if (challengeSeed != null) deploy(settings.avatar);
     else hud.showAvatarSelect(AVATARS, settings.avatar, deploy);
   };
+  track('title_shown', {
+    challenge: challengeSeed != null, daily_num: dailyNumber(Date.now()),
+    daily_best_local: Math.max(...DIFFICULTIES.map(m => getDailyBest(dailyNumber(Date.now()), m))),
+  });
   hud.showStart({
     challengeSeed,
     daily: { num: dailyNumber(Date.now()), best: Math.max(...DIFFICULTIES.map(m => getDailyBest(dailyNumber(Date.now()), m))) },
@@ -399,6 +429,7 @@ async function start() {
   ];
   let cheatBuf = '';
   function applyCheat(name: string): string | null {
+    runTainted = true; // any cheat taints the run (excluded from the leaderboard)
     const c = cheats.find(x => x.code === name);
     if (!c) return null;
     const msg = c.effect();
@@ -808,6 +839,20 @@ async function start() {
     hud.hideBoss();
     const newDailyBest = isDaily ? recordDailyScore(dailyNum, dailyMode, state.score) : false;
     const seed = getSeed();
+    // telemetry + global-leaderboard submit (both no-op when the backend flag is off)
+    track('run_end', {
+      mode: isDaily ? dailyMode : 'free', survivor: AVATARS[settings.avatar].name,
+      score: state.score, kills: state.kills, level: state.level, time_s: state.time, combo_peak: state.comboPeak,
+      is_daily: isDaily, daily_num: isDaily ? dailyNum : null, new_daily_best: newDailyBest,
+      run_index: runsThisSession, tainted: runTainted, end_reason: 'death',
+    });
+    if (isDaily && !runTainted) {
+      submitScore({
+        score: state.score, kills: state.kills, level: state.level, time: state.time, combo_peak: state.comboPeak,
+        survivor: AVATARS[settings.avatar].name, mode: dailyMode, seed, daily_num: dailyNum,
+        backend: onWebGPU() ? 'webgpu' : 'webgl2',
+      });
+    }
     // anonymous run context for feedback — no UA, no id, no geo (privacy ceiling)
     const fbCtx: FeedbackCtx = {
       appVersion: APP_VERSION,
@@ -826,9 +871,12 @@ async function start() {
     hud.showGameOver(state, {
       survivor: AVATARS[settings.avatar].name,
       seed,
-      shareUrl: `${location.origin}${location.pathname}?seed=${seed}${isDaily ? `&mode=${dailyMode}` : ''}`,
+      // UTM is appended ONLY when the backend is on, so shared links are unchanged while off
+      shareUrl: `${location.origin}${location.pathname}?seed=${seed}${isDaily ? `&mode=${dailyMode}` : ''}${TELEMETRY_ENDPOINT ? `&utm_source=${isDaily ? 'challenge' : 'share'}` : ''}`,
       daily: isDaily ? { num: dailyNum, mode: dailyMode, best: getDailyBest(dailyNum, dailyMode), isBest: newDailyBest } : null,
       onFeedback: (input) => submitFeedback(input, fbCtx),
+      onShare: (method) => track('share_click', { is_daily: isDaily, method, score: state.score }),
+      onBoard: isDaily ? () => fetchBoard(dailyNum, dailyMode) : undefined,
     });
   }
 
@@ -1075,10 +1123,12 @@ async function start() {
     else renderer.render(scene, camera);
   });
 
-  // feedback: flush any queued items (no-op until Phase 2b sets the endpoint),
-  // and try a last-ditch beacon when the tab closes (covers RESTART's reload)
+  // feedback + leaderboard: flush any queued items (all no-op until the backend flag
+  // is set), and try a last-ditch beacon when the tab closes (covers RESTART's reload)
   flushFeedback();
-  window.addEventListener('pagehide', beaconFlush);
+  flushScores();
+  window.addEventListener('pagehide', () => { beaconFlush(); beaconFlushScores(); });
+  window.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') void flushScores(); });
 }
 
 start().catch(err => {
