@@ -273,10 +273,13 @@ export class Swarm {
       age[i] += dt;
       const sc = age[i] < GROW_T ? baseScale[i] * (age[i] / GROW_T) : baseScale[i];
 
+      // face the player as they shamble: local +Z -> direction toward player,
+      // baked into a Y-rotation × scale (the chase dir dxp/d,dzp/d is already known)
+      const ux = dxp / d, uz = dzp / d;
       const o = i * 16;
-      m[o] = sc;
+      m[o] = uz * sc; m[o + 2] = -ux * sc;
       m[o + 5] = sc;
-      m[o + 10] = sc;
+      m[o + 8] = ux * sc; m[o + 10] = uz * sc;
       m[o + 12] = nx;
       m[o + 13] = r * pulse[bob[i]];
       m[o + 14] = nz;

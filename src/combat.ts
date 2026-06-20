@@ -296,6 +296,9 @@ export class Missiles {
       this.px[i] = this.px[last]; this.pz[i] = this.pz[last];
       this.vx[i] = this.vx[last]; this.vz[i] = this.vz[last];
       this.life[i] = this.life[last]; this.dmg[i] = this.dmg[last]; this.aoe[i] = this.aoe[last];
+      // move the matrix too, or the swapped-in missile renders a stale ghost for a frame
+      const m = this.mesh.instanceMatrix.array as Float32Array;
+      m.copyWithin(i * 16, last * 16, last * 16 + 16);
     }
     this.syncDraw();
   }

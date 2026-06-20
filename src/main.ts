@@ -137,7 +137,11 @@ async function start() {
   function setAvatar(idx: number): void {
     if (survivor) {
       player.remove(survivor);
-      survivor.traverse(o => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
+      survivor.traverse(o => {
+        const m = o as THREE.Mesh;
+        if (m.geometry) m.geometry.dispose();
+        if (m.material) (Array.isArray(m.material) ? m.material : [m.material]).forEach(mat => mat.dispose());
+      });
     }
     const a = AVATARS[idx];
     survivor = makeSurvivor(a);
@@ -402,19 +406,20 @@ async function start() {
   }
   let prevBossHp = -1, bossDmgAccum = 0, bossDmgTimer = 0;
 
-  // combo-milestone celebrations
+  // combo-milestone celebrations: each fires once per run (never re-fires on a
+  // combo reset+reclimb), and a single-frame mass kill celebrates only the
+  // highest milestone crossed — no toast/audio/shake spam
   const COMBO_MILESTONES = [10, 25, 50, 100, 200];
   let comboMilestoneIdx = 0;
   function checkComboMilestones(): void {
-    if (state.combo === 0) { comboMilestoneIdx = 0; return; }
-    while (comboMilestoneIdx < COMBO_MILESTONES.length && state.combo >= COMBO_MILESTONES[comboMilestoneIdx]) {
-      const mult = (1 + Math.min(state.combo, 40) * 0.1).toFixed(1);
-      const sp = projectToScreen(player.position.x, 3, player.position.z);
-      if (sp) hud.floatText(sp.sx, sp.sy - 40, `✦ ${COMBO_MILESTONES[comboMilestoneIdx]} COMBO  ×${mult} ✦`, '#ff8af0');
-      sfx.sfxLevelUp();
-      addShake(0.3);
-      comboMilestoneIdx++;
-    }
+    if (comboMilestoneIdx >= COMBO_MILESTONES.length || state.combo < COMBO_MILESTONES[comboMilestoneIdx]) return;
+    while (comboMilestoneIdx < COMBO_MILESTONES.length && state.combo >= COMBO_MILESTONES[comboMilestoneIdx]) comboMilestoneIdx++;
+    const milestone = COMBO_MILESTONES[comboMilestoneIdx - 1];
+    const mult = (1 + Math.min(state.combo, 40) * 0.1).toFixed(1);
+    const sp = projectToScreen(player.position.x, 3, player.position.z);
+    if (sp) hud.floatText(sp.sx, sp.sy - 40, `✦ ${milestone} COMBO  ×${mult} ✦`, '#ff8af0');
+    sfx.sfxLevelUp();
+    addShake(0.3);
   }
 
   /** Track the toughest living boss for the HUD bar + floating damage numbers. */
@@ -526,6 +531,17 @@ async function start() {
     else if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') { if (!e.repeat) doDash(); }
   });
 
+  // wall-clock ability cooldown + missile refill (unaffected by hit-stop slow-mo)
+  function tickRealtime(rdt: number): void {
+    if (dashCd > 0) dashCd -= rdt;
+    if (state.missiles < MISSILE_MAX) {
+      missileRefillTimer -= rdt;
+      if (missileRefillTimer <= 0) { state.missiles++; missileRefillTimer = MISSILE_REFILL; }
+    } else {
+      missileRefillTimer = MISSILE_REFILL; // primed at max so the next drop starts a fresh timer
+    }
+  }
+
   function gameOver(): void {
     over = true;
     particles.burst(player.position.x, 1, player.position.z, new THREE.Color(0x44ffee), 160, 16);
@@ -578,7 +594,7 @@ async function start() {
     bloom: () => !!post,
     step: (dt = 1 / 60, frames = 1) => {
       for (let i = 0; i < frames; i++) {
-        if (started && !over && !leveling && !paused) update(dt);
+        if (started && !over && !leveling && !paused) { tickRealtime(dt); update(dt); }
         else if (over) particles.update(dt);
         hud.tick(dt);
       }
@@ -603,14 +619,9 @@ async function start() {
       glow.intensity = baseGlow * (1 + muzzle * 0.8);
     }
 
-    // ability timers
-    if (dashCd > 0) dashCd -= dt;
+    // i-frames decay with the (possibly hit-stop-scaled) sim — fine, they're
+    // part of the dash action; the wall-clock cooldown/refill are in tickRealtime
     if (iframes > 0) iframes -= dt;
-    missileRefillTimer -= dt;
-    if (missileRefillTimer <= 0) {
-      if (state.missiles < MISSILE_MAX) state.missiles++;
-      missileRefillTimer = MISSILE_REFILL;
-    }
 
     const mv = getMove();
     player.position.x += mv.x * state.moveSpeed * dt;
@@ -737,7 +748,7 @@ async function start() {
       simDt = dt * 0.18;
     }
 
-    if (started && !over && !leveling && !paused) update(simDt);
+    if (started && !over && !leveling && !paused) { tickRealtime(dt); update(simDt); }
     else if (over) particles.update(simDt); // let the death explosion play out
     hud.tick(dt);
 
