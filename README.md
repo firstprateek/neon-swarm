@@ -32,7 +32,7 @@ Pick **☀ Daily Challenge** or **▶ Free Play**, choose a survivor, then survi
 
 All gameplay keys are **remappable** in Settings. Collect green XP gems, pick an upgrade on each level-up, and push your score. Bigger enemies are worth more; chaining kills builds a score **combo** multiplier. Bosses arrive on a timer and drop ammo restocks.
 
-**On mobile/touch** (auto-detected): a floating analog joystick on the bottom-right moves you (push further = faster), and ability buttons on the bottom-left fire **nuke / missile / dash** (plus a **FIRE** button when auto-fire is off). Add `?touch` to force the on-screen controls on a desktop browser.
+**On mobile/touch** (auto-detected): a floating analog joystick on the bottom-right moves you (push further = faster), and ability buttons on the bottom-left fire **nuke / missile / dash** (plus a **FIRE** button when auto-fire is off). A top-right ⚙ opens pause/settings and `+`/`−` buttons zoom. Menus stack vertically and tap-outside-to-close. Add `?touch` to force the on-screen controls on a desktop browser.
 
 ## Control modes
 

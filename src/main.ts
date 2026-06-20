@@ -493,6 +493,16 @@ async function start() {
   byId<HTMLButtonElement>('resume-btn').addEventListener('click', () => togglePause());
   byId<HTMLButtonElement>('pause-restart-btn').addEventListener('click', () => location.reload());
 
+  // tap the backdrop (outside the content) to close — mobile has no Esc key
+  const pauseOverlayEl = byId('pause-overlay');
+  pauseOverlayEl.addEventListener('click', e => { if (e.target === pauseOverlayEl) togglePause(); });
+  settingsOverlay.addEventListener('click', e => { if (e.target === settingsOverlay) closeSettings(); });
+
+  // mobile zoom buttons (top-right) — desktop uses the wheel + / - keys
+  const stepZoom = (d: number) => { settings.zoom = clampZoom(settings.zoom + d); saveSettings(settings); };
+  byId<HTMLButtonElement>('zoom-in').addEventListener('pointerdown', e => { e.preventDefault(); stepZoom(-0.15); });
+  byId<HTMLButtonElement>('zoom-out').addEventListener('pointerdown', e => { e.preventDefault(); stepZoom(0.15); });
+
   function openLevelUp(): void {
     const choices = rollUpgrades(3);
     if (choices.length === 0) {

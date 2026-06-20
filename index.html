@@ -224,6 +224,26 @@
     .pause-buttons button { padding: 12px 30px; font-family: inherit; font-size: 15px; letter-spacing: 3px; background: transparent; color: var(--accent); border: 1px solid var(--accent); cursor: pointer; }
     .pause-buttons button:hover { background: rgba(94,242,255,0.12); box-shadow: 0 0 18px rgba(94,242,255,0.4); }
 
+    /* ---- mobile overlay layout: stack vertically, never clip, scroll when tall ---- */
+    body.touch .overlay { justify-content: safe center; overflow-y: auto; padding: 18px 10px; gap: 12px; }
+    body.touch .title { font-size: 32px; letter-spacing: 6px; }
+    body.touch .death-title { font-size: 30px; letter-spacing: 5px; }
+    body.touch .cards { flex-direction: column; align-items: stretch; width: 100%; max-width: 360px; }
+    body.touch .card { width: auto; }
+    body.touch .start-modes { flex-direction: column; align-items: stretch; width: 100%; max-width: 340px; margin-top: 14px; }
+    body.touch .mode-btn { min-width: 0; }
+    body.touch .settings-screen { max-height: none; width: 100%; max-width: 420px; }
+    body.touch .pause-buttons { flex-direction: column; align-items: stretch; width: 100%; max-width: 340px; gap: 12px; }
+    body.touch .pause-buttons button { width: 100%; }
+
+    /* ---- mobile zoom buttons (top-right, below the gear) ---- */
+    #mobile-zoom { position: fixed; top: 70px; right: 14px; z-index: 16; display: none; flex-direction: column; gap: 8px; }
+    body.touch #mobile-zoom { display: flex; }
+    #mobile-zoom button { width: 46px; height: 46px; font-size: 26px; line-height: 1; font-family: inherit;
+      background: rgba(8,14,20,0.6); color: var(--accent); border: 1px solid rgba(94,242,255,0.4);
+      cursor: pointer; pointer-events: auto; display: flex; align-items: center; justify-content: center; }
+    #mobile-zoom button:active { box-shadow: 0 0 14px rgba(94,242,255,0.5); transform: scale(0.94); }
+
     #boss-wrap { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); width: 46%; max-width: 620px; text-align: center; }
     #boss-wrap.hidden { display: none; }
     #boss-name { font-size: 13px; letter-spacing: 5px; color: #ff77ff; text-shadow: 0 0 10px #ff44ff; margin-bottom: 5px; }
@@ -285,6 +305,10 @@
   </div>
 
   <button id="hud-gear" class="gear-btn" aria-label="Pause / Settings">⚙</button>
+  <div id="mobile-zoom">
+    <button id="zoom-in" aria-label="Zoom in">+</button>
+    <button id="zoom-out" aria-label="Zoom out">−</button>
+  </div>
 
   <div id="start-overlay" class="overlay">
     <button id="title-gear" class="gear-btn" aria-label="Settings">⚙</button>
@@ -350,7 +374,7 @@
     <div class="pause-buttons">
       <button id="share-btn">⚔ CHALLENGE A FRIEND</button>
       <button id="feedback-btn">💬 LEAVE FEEDBACK</button>
-      <button id="restart-btn">RESTART</button>
+      <button id="restart-btn">↻ RESTART</button>
     </div>
   </div>
 
