@@ -9,6 +9,10 @@ import { Swarm, ENEMY_TYPES, BOSS_TYPE, HIT_FLASH } from './swarm';
 import { Bullets, Gems, Particles, Missiles } from './combat';
 import { Blast } from './fx';
 import { AmbientMotes } from './ambient';
+import { TELEMETRY_ENDPOINT, LEADERBOARD_ENDPOINT, FEEDBACK_ENDPOINT, CONFIG_URL } from './config';
+import { telemetryAllowed, track, __t } from './telemetry';
+import { submitScore, fetchBoard, __lb } from './leaderboard';
+import { normNote, dprBucket, screenTier, refAllow } from './telemetry-helpers';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize } from './director';
 import { setSeed, srand, getSeed, clearSeed } from './rng';
@@ -309,6 +313,35 @@ function run(): void {
     am.setBudget(0);
     am.update(1 / 60, 0, 0, 0.5); // must early-return without throwing
     check('ambient: 0 budget hides + no-ops', am.count === 0 && !am.mesh.visible);
+  }
+
+  // ---------- Backend SDK is OFF by default (Phase 2b feature flags) ----------
+  {
+    // 1. config: every endpoint null => the whole backend is a no-op
+    check('backend: all endpoints null by default', TELEMETRY_ENDPOINT === null && LEADERBOARD_ENDPOINT === null && FEEDBACK_ENDPOINT === null && CONFIG_URL === null);
+    check('backend: telemetry gate closed when OFF', telemetryAllowed() === false);
+
+    // 2. zero network while OFF — stub fetch + sendBeacon; they must never be called
+    try { localStorage.removeItem('ns-lb-queue'); } catch { /* ignore */ }
+    let net = 0;
+    const ofetch = window.fetch, obeacon = navigator.sendBeacon;
+    window.fetch = (() => { net++; return Promise.reject(new Error('blocked')); }) as typeof window.fetch;
+    (navigator as unknown as { sendBeacon: unknown }).sendBeacon = () => { net++; return false; };
+    __t._reset();
+    for (let i = 0; i < 50; i++) track('run_end', { score: i });
+    const tQ = __t.queueLen();
+    submitScore({ score: 100, kills: 10, level: 2, time: 30, combo_peak: 5, survivor: 'VEX', mode: 'easy', seed: 42, daily_num: 20, backend: 'webgl2' });
+    const lbQ = __lb.pending().length;
+    void fetchBoard(20, 'easy'); // returns null without fetching when OFF
+    window.fetch = ofetch; (navigator as unknown as { sendBeacon: unknown }).sendBeacon = obeacon;
+    check('backend: track() OFF queues nothing + zero network', tQ === 0 && net === 0, `q=${tQ} net=${net}`);
+    check('backend: submitScore OFF queues nothing', lbQ === 0, String(lbQ));
+
+    // 3. telemetry helpers (pure, anonymous coarsening)
+    check('helpers: normNote maps the backend note', normNote(' (forced)') === 'forced' && normNote(' (auto-fallback)') === 'auto-fallback' && normNote('') === 'native');
+    check('helpers: dprBucket buckets dpr', dprBucket(1) === '1' && dprBucket(2) === '2' && dprBucket(3) === '3+');
+    check('helpers: screenTier tiers resolution', screenTier(1920, 1080) === '<=1080p' && screenTier(3840, 2160) === '4k');
+    check('helpers: refAllow allow-lists referrers', refAllow('x.com') === 'twitter' && refAllow('discord.com') === 'discord' && refAllow('evil.example') === 'other' && refAllow(null) === null);
   }
 
   // ---------- Input: analog touch override ----------
