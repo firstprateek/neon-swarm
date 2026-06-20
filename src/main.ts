@@ -131,7 +131,8 @@ async function start() {
     screenUV.y.smoothstep(0.35, 1.0),
   );
   scene.background = null;
-  scene.fog = new THREE.FogExp2(SKY_HORIZON, 0.026);
+  const FOG_BASE = 0.026; // density at zoom 1; scaled by 1/zoom each frame so zoom-out stays readable
+  scene.fog = new THREE.FogExp2(SKY_HORIZON, FOG_BASE);
 
   const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 300);
   camera.position.set(0, 26, 15);
@@ -946,6 +947,9 @@ async function start() {
     camera.position.x += (player.position.x - camera.position.x) * zlerp;
     camera.position.y += (26 * settings.zoom - camera.position.y) * zlerp;
     camera.position.z += (player.position.z + 15 * settings.zoom - camera.position.z) * zlerp;
+    // fog is camera-distance based, so dollying out would over-fog everything (incl. the
+    // player). Scale density by 1/zoom so the haze at the player stays constant across zoom.
+    (scene.fog as THREE.FogExp2).density = FOG_BASE / settings.zoom;
     // transient, zero-mean screen-shake offset (re-centered by the lerp next frame)
     if (shake > 0.001) {
       camera.position.x += (Math.random() * 2 - 1) * shake;
