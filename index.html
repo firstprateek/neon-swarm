@@ -52,6 +52,17 @@
     .blink { animation: blink 1.2s infinite; font-size: 16px; color: var(--accent); letter-spacing: 4px; margin-top: 24px; }
     @keyframes blink { 50% { opacity: 0.25; } }
 
+    .avatar-cards { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; max-width: 92vw; }
+    .avatar-card { width: 140px; padding: 14px 10px; background: var(--panel); border: 1px solid rgba(94,242,255,0.3); cursor: pointer; text-align: center; transition: transform 0.08s, box-shadow 0.08s, border-color 0.08s; }
+    .avatar-card:hover { transform: translateY(-3px); }
+    .avatar-card.selected { border-color: var(--accent); box-shadow: 0 0 22px rgba(94,242,255,0.45); transform: translateY(-3px); }
+    .avatar-sil { width: 54px; margin: 0 auto 12px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+    .avatar-sil > div:nth-child(1) { width: 24px; height: 24px; }
+    .avatar-sil > div:nth-child(2) { width: 44px; height: 40px; }
+    .avatar-sil > div:nth-child(3) { width: 36px; height: 30px; }
+    .avatar-name { font-size: 16px; letter-spacing: 2px; margin-bottom: 4px; text-shadow: 0 0 8px currentColor; }
+    .avatar-trait { font-size: 11px; color: #a8ccd6; line-height: 1.4; }
+
     .cards { display: flex; gap: 16px; }
     .card {
       width: 210px; padding: 18px 16px; background: var(--panel);
@@ -129,6 +140,12 @@
     <div class="title">NEON SWARM</div>
     <div class="subtitle">WASD / ARROWS TO MOVE &nbsp;·&nbsp; WEAPONS AUTO-FIRE &nbsp;·&nbsp; SURVIVE</div>
     <div class="blink">CLICK TO START</div>
+  </div>
+
+  <div id="avatar-overlay" class="overlay hidden">
+    <div class="subtitle" style="font-size: 22px; color: #eaffff; text-shadow: 0 0 12px var(--accent);">CHOOSE YOUR SURVIVOR</div>
+    <div class="avatar-cards" id="avatar-cards"></div>
+    <div class="blink">1–4 SELECT · ENTER / CLICK TO DEPLOY</div>
   </div>
 
   <div id="levelup-overlay" class="overlay hidden">

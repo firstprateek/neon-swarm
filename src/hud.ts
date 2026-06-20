@@ -20,6 +20,8 @@ const gameoverOverlay = el('gameover-overlay');
 const cards = el('cards');
 const goStats = el('go-stats');
 const pauseOverlay = el('pause-overlay');
+const avatarOverlay = el('avatar-overlay');
+const avatarCards = el('avatar-cards');
 const bossWrap = el('boss-wrap');
 const bossFill = el('boss-fill');
 const bossWarn = el('boss-warn');
@@ -247,6 +249,42 @@ export function showLevelUp(choices: Upgrade[], onPick: (u: Upgrade) => void): v
   });
   window.addEventListener('keydown', keyHandler);
   levelupOverlay.classList.remove('hidden');
+}
+
+export interface AvatarCard { name: string; trait: string; skin: number; clothes: number; legs: number; accent: number }
+
+/** survivor select screen: 4 cards w/ CSS-silhouette thumbnails, 1-4 + arrows + Enter */
+export function showAvatarSelect(avatars: AvatarCard[], current: number, onPick: (i: number) => void): void {
+  let sel = Math.max(0, Math.min(avatars.length - 1, current));
+  avatarCards.innerHTML = '';
+  const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
+  const els = avatars.map((a, i) => {
+    const card = document.createElement('div');
+    card.className = 'avatar-card';
+    card.innerHTML =
+      `<div class="avatar-sil"><div style="background:${hex(a.skin)}"></div><div style="background:${hex(a.clothes)}"></div><div style="background:${hex(a.legs)}"></div></div>` +
+      `<div class="avatar-name" style="color:${hex(a.accent)}">${a.name}</div>` +
+      `<div class="avatar-trait">${a.trait}</div>`;
+    card.addEventListener('click', () => { sel = i; commit(); });
+    avatarCards.appendChild(card);
+    return card;
+  });
+  const highlight = () => els.forEach((c, i) => c.classList.toggle('selected', i === sel));
+  const commit = () => {
+    window.removeEventListener('keydown', keyHandler);
+    avatarOverlay.classList.add('hidden');
+    onPick(sel);
+  };
+  const keyHandler = (e: KeyboardEvent) => {
+    const n = Number(e.key);
+    if (n >= 1 && n <= avatars.length) { sel = n - 1; highlight(); }
+    else if (e.code === 'ArrowRight') { sel = (sel + 1) % avatars.length; highlight(); }
+    else if (e.code === 'ArrowLeft') { sel = (sel - 1 + avatars.length) % avatars.length; highlight(); }
+    else if (e.code === 'Enter' || e.code === 'Space') commit();
+  };
+  window.addEventListener('keydown', keyHandler);
+  highlight();
+  avatarOverlay.classList.remove('hidden');
 }
 
 export function showPause(): void { pauseOverlay.classList.remove('hidden'); }

@@ -12,6 +12,7 @@ import { spawnRate, rollEnemyType, bossHp, hordeSize } from './director';
 import { createQuality, governQuality, MAX_TIER } from './perf';
 import * as sfx from './sfx';
 import { defaultSettings, mergeSettings, qualityTier } from './settings';
+import { AVATARS, makeSurvivor } from './avatars';
 import { createState, grantXp, xpForLevel, rollUpgrades, registerKill, tickCombo, comboMultiplier, SCORE_BY_TYPE, UPGRADES } from './state';
 import { getMove } from './input';
 import * as hud from './hud';
@@ -426,6 +427,26 @@ function run(): void {
     check('settings: valid values preserved', m2.quality === 'low' && m2.fps === 144 && m2.volume === 30 && m2.bloom === false);
     // quality -> governor tier mapping
     check('settings: qualityTier maps modes', qualityTier('auto') === -1 && qualityTier('ultra') === 0 && qualityTier('high') === 1 && qualityTier('medium') === 2 && qualityTier('low') === 3);
+    // avatar validation + persistence
+    check('settings: default avatar is 0', defaultSettings().avatar === 0);
+    check('settings: out-of-range avatar falls back', mergeSettings({ avatar: 99 }).avatar === 0 && mergeSettings({ avatar: -1 }).avatar === 0);
+    check('settings: valid avatar preserved', mergeSettings({ avatar: 2 }).avatar === 2);
+  }
+
+  // ---------- Avatar select ----------
+  {
+    let picked = -1;
+    hud.showAvatarSelect(AVATARS, 1, i => { picked = i; });
+    const overlay = document.getElementById('avatar-overlay')!;
+    const cardEls = document.querySelectorAll('#avatar-cards .avatar-card');
+    check('avatars: four survivors with distinct names', AVATARS.length === 4 && new Set(AVATARS.map(a => a.name)).size === 4);
+    check('avatars: select renders a card per survivor', cardEls.length === 4, String(cardEls.length));
+    check('avatars: current selection highlighted', cardEls[1].classList.contains('selected'));
+    (cardEls[2] as HTMLElement).click();
+    check('avatars: clicking a card picks it and closes', picked === 2 && overlay.classList.contains('hidden'));
+    // makeSurvivor builds a non-empty group with geometry
+    const surv = makeSurvivor(AVATARS[0]);
+    check('avatars: makeSurvivor builds a body', surv.children.length >= 6);
   }
 
   // ---------- Audio (sfx) ----------

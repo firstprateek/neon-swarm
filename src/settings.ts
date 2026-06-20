@@ -11,14 +11,17 @@ export interface Settings {
   sound: boolean;
   volume: number; // 0..100
   fps: number;    // one of FPS_CHOICES
+  avatar: number; // chosen survivor index
 }
 
 const KEY = 'neon-swarm-settings';
 export const FPS_CHOICES = [60, 120, 144];
 export const QUALITY_CHOICES: QualityMode[] = ['auto', 'ultra', 'high', 'medium', 'low'];
 
+export const AVATAR_COUNT = 4;
+
 export function defaultSettings(): Settings {
-  return { quality: 'auto', bloom: true, sound: true, volume: 45, fps: 120 };
+  return { quality: 'auto', bloom: true, sound: true, volume: 45, fps: 120, avatar: 0 };
 }
 
 /** validate/clamp arbitrary input into a complete Settings (used by load + tests) */
@@ -32,6 +35,7 @@ export function mergeSettings(raw: unknown): Settings {
     sound: typeof r.sound === 'boolean' ? r.sound : d.sound,
     volume: typeof r.volume === 'number' && isFinite(r.volume) ? Math.max(0, Math.min(100, Math.round(r.volume))) : d.volume,
     fps: FPS_CHOICES.includes(r.fps as number) ? (r.fps as number) : d.fps,
+    avatar: typeof r.avatar === 'number' && r.avatar >= 0 && r.avatar < AVATAR_COUNT ? (r.avatar | 0) : d.avatar,
   };
 }
 

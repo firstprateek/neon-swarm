@@ -10,6 +10,7 @@ import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize, BOSS_INTERVAL } from './director';
 import { createQuality, governQuality, QUALITY_TIERS, MAX_TIER } from './perf';
 import { loadSettings, saveSettings, qualityTier, type Settings, type QualityMode } from './settings';
+import { AVATARS, makeSurvivor } from './avatars';
 import * as sfx from './sfx';
 import * as hud from './hud';
 
@@ -121,25 +122,29 @@ async function start() {
   const gridHelper = new THREE.GridHelper(1200, 240, 0x2a2418, 0x171208); // ruined-pavement amber-brown
   scene.add(gridHelper);
 
-  // --- player ---
+  // --- player: a procedural human survivor (swappable avatar) ---
   const player = new THREE.Group();
-  const shipMat = new THREE.MeshStandardMaterial({
-    color: 0x113344, emissive: 0x44ffee, emissiveIntensity: 1.6, roughness: 0.3,
-  });
-  const ship = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.6, 6), shipMat);
-  ship.rotation.x = Math.PI / 2;
-  ship.position.y = 0.8;
-  player.add(ship);
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(1.05, 0.05, 8, 40),
-    new THREE.MeshBasicMaterial({ color: 0x44ffee })
-  );
+  const ringMat = new THREE.MeshBasicMaterial({ color: AVATARS[settings.avatar].accent });
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.05, 0.05, 8, 40), ringMat);
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.1;
   player.add(ring);
-  const glow = new THREE.PointLight(0x55ffee, 70, 26, 1.8);
+  const glow = new THREE.PointLight(AVATARS[settings.avatar].accent, 70, 26, 1.8);
   glow.position.y = 3;
   player.add(glow);
+  let survivor: THREE.Group | null = null;
+  function setAvatar(idx: number): void {
+    if (survivor) {
+      player.remove(survivor);
+      survivor.traverse(o => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
+    }
+    const a = AVATARS[idx];
+    survivor = makeSurvivor(a);
+    player.add(survivor);
+    ringMat.color.setHex(a.accent);
+    glow.color.setHex(a.accent);
+  }
+  setAvatar(settings.avatar);
   scene.add(player);
 
   // --- presentation watchdog: never leave the player on a black screen ---
@@ -226,7 +231,15 @@ async function start() {
   sfx.setMuted(!settings.sound);
   if (params.has('mute')) sfx.setMuted(true);
 
-  hud.showStart(() => { started = true; sfx.initAudio(); });
+  hud.showStart(() => {
+    hud.showAvatarSelect(AVATARS, settings.avatar, idx => {
+      settings.avatar = idx;
+      saveSettings(settings);
+      setAvatar(idx);
+      started = true;
+      sfx.initAudio();
+    });
+  });
 
   function togglePause(): void {
     if (!started || over || leveling) return; // can't pause pre-start, dead, or mid-level-up
