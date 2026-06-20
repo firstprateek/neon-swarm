@@ -43,11 +43,17 @@
       </div>
       <div id="vignette"></div>
     </div>
-    <div id="start-overlay" class="overlay"></div>
+    <div id="start-overlay" class="overlay">
+      <button id="daily-btn" class="mode-btn daily"><span class="mode-main"></span><span class="mode-sub" id="daily-sub"></span></button>
+      <button id="freeplay-btn" class="mode-btn"><span class="mode-main"></span><span class="mode-sub" id="freeplay-sub"></span></button>
+      <div id="start-hint"></div>
+    </div>
     <div id="levelup-overlay" class="overlay hidden"><div class="cards" id="cards"></div></div>
     <div id="gameover-overlay" class="overlay hidden">
+      <div id="brag-label"></div>
       <div id="brag-score"></div>
       <div id="brag-sub"></div>
+      <div id="brag-daily" class="hidden"></div>
       <div id="go-stats"></div>
       <div id="brag-seed"></div>
       <button id="share-btn"></button>

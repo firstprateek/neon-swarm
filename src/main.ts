@@ -13,6 +13,7 @@ import { createQuality, governQuality, QUALITY_TIERS, MAX_TIER } from './perf';
 import { loadSettings, saveSettings, qualityTier, type Settings, type QualityMode } from './settings';
 import { AVATARS, makeSurvivor } from './avatars';
 import { setSeed, getSeed, randomSeed, srand } from './rng';
+import { dailySeed, dailyNumber, getDailyBest, recordDailyScore } from './daily';
 import * as sfx from './sfx';
 import * as hud from './hud';
 
@@ -92,10 +93,13 @@ async function start() {
   if (params.has('quality')) pinnedTier = Math.max(-1, Math.min(MAX_TIER, Number(params.get('quality')) | 0));
   if (noBloom) bloomAllowed = false;
 
-  // seed the gameplay sim: ?seed=N replays the byte-identical run (challenge links,
-  // daily seed); otherwise a fresh random seed each load. Cosmetic rng stays unseeded.
-  const runSeed = params.has('seed') ? (Number(params.get('seed')) >>> 0) : randomSeed();
-  setSeed(runSeed);
+  // seed the gameplay sim. ?seed=N => a challenge link replaying that exact run.
+  // Otherwise the seed is chosen when the player picks a mode (daily/free) at the
+  // title screen; we set a provisional random seed now so any pre-start use is sane.
+  const challengeSeed = params.has('seed') ? (Number(params.get('seed')) >>> 0) : null;
+  setSeed(challengeSeed != null ? challengeSeed : randomSeed());
+  let isDaily = false; // current run is today's Daily Challenge
+  let dailyNum = 0;
 
   let renderer = await makeRenderer(forceGL);
   const app = document.getElementById('app')!;
@@ -250,17 +254,32 @@ async function start() {
   sfx.setMuted(!settings.sound);
   if (params.has('mute')) sfx.setMuted(true);
 
-  hud.showStart(() => {
-    const deploy = (idx: number) => {
-      settings.avatar = idx;
-      saveSettings(settings);
-      setAvatar(idx);
-      started = true;
-      sfx.initAudio();
-    };
-    // challenge link (?seed=…) -> drop straight into the run, no avatar-select friction
-    if (params.has('seed')) deploy(settings.avatar);
+  const deploy = (idx: number) => {
+    settings.avatar = idx;
+    saveSettings(settings);
+    setAvatar(idx);
+    started = true;
+    sfx.initAudio();
+  };
+  // challenge link drops straight into the run; otherwise pick a survivor first
+  const startRun = () => {
+    if (challengeSeed != null) deploy(settings.avatar);
     else hud.showAvatarSelect(AVATARS, settings.avatar, deploy);
+  };
+  hud.showStart({
+    challengeSeed,
+    daily: { num: dailyNumber(Date.now()), best: getDailyBest(dailyNumber(Date.now())) },
+    onDaily: () => {
+      isDaily = true;
+      dailyNum = dailyNumber(Date.now());
+      setSeed(dailySeed(Date.now())); // global same-seed run for everyone today
+      startRun();
+    },
+    onFreePlay: () => {
+      // a challenge link keeps its given seed; plain free play rolls a fresh one
+      if (challengeSeed == null) setSeed(randomSeed());
+      startRun();
+    },
   });
 
   function togglePause(): void {
@@ -558,10 +577,13 @@ async function start() {
     addShake(2.0);
     sfx.sfxDeath();
     hud.hideBoss();
+    const newDailyBest = isDaily ? recordDailyScore(dailyNum, state.score) : false;
+    const seed = getSeed();
     hud.showGameOver(state, {
       survivor: AVATARS[settings.avatar].name,
-      seed: getSeed(),
-      shareUrl: `${location.origin}${location.pathname}?seed=${getSeed()}`,
+      seed,
+      shareUrl: `${location.origin}${location.pathname}?seed=${seed}`,
+      daily: isDaily ? { num: dailyNum, best: getDailyBest(dailyNum), isBest: newDailyBest } : null,
     });
   }
 
@@ -599,6 +621,7 @@ async function start() {
     iframes: () => iframes,
     seed: () => getSeed(),
     setSeed,
+    daily: () => ({ isDaily, num: dailyNum }),
     audio: () => ({ ready: sfx.audioReady(), muted: sfx.isMuted() }),
     // test hook: feed a synthetic frame time to the governor and apply any tier change
     feedFrame: (frameMs: number) => {

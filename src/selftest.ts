@@ -10,6 +10,7 @@ import { Bullets, Gems, Particles, Missiles } from './combat';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize } from './director';
 import { setSeed, srand, getSeed, clearSeed } from './rng';
+import { dailySeed, dailyNumber, dailyKey, secondsToNextDaily, getDailyBest, recordDailyScore } from './daily';
 import { createQuality, governQuality, MAX_TIER } from './perf';
 import * as sfx from './sfx';
 import { defaultSettings, mergeSettings, qualityTier } from './settings';
@@ -340,6 +341,26 @@ function run(): void {
     clearSeed(); // back to Math.random for the rest of the suite
   }
 
+  // ---------- Daily Challenge ----------
+  {
+    const t = Date.UTC(2026, 5, 20, 14, 30); // 2026-06-20 14:30 UTC
+    check('daily: key is UTC YYYY-MM-DD', dailyKey(t) === '2026-06-20', dailyKey(t));
+    check('daily: same UTC day -> same seed', dailySeed(t) === dailySeed(Date.UTC(2026, 5, 20, 23, 59)), `${dailySeed(t)}`);
+    check('daily: next UTC day -> different seed', dailySeed(t) !== dailySeed(Date.UTC(2026, 5, 21, 1, 0)));
+    check('daily: seed is a uint32', (dailySeed(t) >>> 0) === dailySeed(t) && dailySeed(t) >= 0);
+    check('daily: #1 is the 2026-06-01 epoch', dailyNumber(Date.UTC(2026, 5, 1, 0, 0)) === 1, String(dailyNumber(Date.UTC(2026, 5, 1))));
+    check('daily: number advances one per day', dailyNumber(t) === 20, String(dailyNumber(t)));
+    check('daily: countdown within a day', secondsToNextDaily(t) > 0 && secondsToNextDaily(t) <= 86400);
+    // local best round-trips and only rises
+    const k = 999001; // fixed test daily-number, far from any real one
+    localStorage.removeItem(`ns-daily-best-${k}`);
+    check('daily: unplayed best is 0', getDailyBest(k) === 0);
+    check('daily: first score sets a new best', recordDailyScore(k, 500) === true && getDailyBest(k) === 500);
+    check('daily: lower score does not lower best', recordDailyScore(k, 300) === false && getDailyBest(k) === 500);
+    check('daily: higher score raises best', recordDailyScore(k, 900) === true && getDailyBest(k) === 900);
+    localStorage.removeItem(`ns-daily-best-${k}`);
+  }
+
   // ---------- Director / difficulty ----------
   {
     check('director: spawn rate increases with time', spawnRate(120) > spawnRate(0), `${spawnRate(0)} -> ${spawnRate(120)}`);
@@ -594,10 +615,23 @@ function run(): void {
     check('hud: swarm count localized', document.getElementById('enemies-txt')!.textContent === (1234).toLocaleString(),
       document.getElementById('enemies-txt')!.textContent ?? 'null');
 
-    let started = false;
-    hud.showStart(() => { started = true; });
-    (document.getElementById('start-overlay') as HTMLElement).click();
-    check('hud: start overlay click begins game', started && document.getElementById('start-overlay')!.classList.contains('hidden'));
+    let startedMode: string | null = null;
+    hud.showStart({ challengeSeed: null, daily: { num: 7, best: 4200 }, onDaily: () => { startedMode = 'daily'; }, onFreePlay: () => { startedMode = 'free'; } });
+    check('hud: daily button shows day # and best', document.getElementById('daily-sub')!.textContent!.includes('Daily #7') && document.getElementById('daily-sub')!.textContent!.includes('4,200'));
+    (document.getElementById('freeplay-btn') as HTMLElement).click();
+    check('hud: free-play button begins game', startedMode === 'free' && document.getElementById('start-overlay')!.classList.contains('hidden'));
+
+    startedMode = null;
+    hud.showStart({ challengeSeed: null, daily: { num: 7, best: 0 }, onDaily: () => { startedMode = 'daily'; }, onFreePlay: () => { startedMode = 'free'; } });
+    (document.getElementById('daily-btn') as HTMLElement).click();
+    check('hud: daily button begins daily run', startedMode === 'daily');
+
+    startedMode = null;
+    hud.showStart({ challengeSeed: 1337, daily: { num: 7, best: 0 }, onDaily: () => { startedMode = 'daily'; }, onFreePlay: () => { startedMode = 'free'; } });
+    check('hud: challenge link hides daily button', document.getElementById('daily-btn')!.classList.contains('hidden') &&
+      document.getElementById('freeplay-btn')!.querySelector('.mode-main')!.textContent!.includes('ACCEPT'));
+    (document.getElementById('freeplay-btn') as HTMLElement).click();
+    check('hud: challenge accept begins game', startedMode === 'free');
 
     let picked: string | null = null;
     hud.showLevelUp(rollUpgrades(3), u => { picked = u.name; });
@@ -621,6 +655,19 @@ function run(): void {
       document.getElementById('brag-seed')!.textContent === 'SEED #42' &&
       (document.getElementById('go-stats')!.innerHTML || '').includes('KILLS'));
     check('hud: challenge-a-friend button wired', typeof document.getElementById('share-btn')!.onclick === 'function');
+    check('hud: non-daily run hides daily badge + label', document.getElementById('brag-label')!.textContent === 'NEON SWARM' &&
+      document.getElementById('brag-daily')!.classList.contains('hidden'));
+
+    hud.showGameOver(s, { survivor: 'MEDIC', seed: 99, shareUrl: 'https://x/?seed=99', daily: { num: 12, best: 123456, isBest: true } });
+    check('hud: daily game-over shows DAILY label + NEW BEST',
+      document.getElementById('brag-label')!.textContent === '☀ DAILY #12' &&
+      !document.getElementById('brag-daily')!.classList.contains('hidden') &&
+      document.getElementById('brag-daily')!.classList.contains('newbest') &&
+      document.getElementById('brag-daily')!.textContent!.includes('NEW DAILY BEST'));
+    hud.showGameOver(s, { survivor: 'MEDIC', seed: 99, shareUrl: 'https://x/?seed=99', daily: { num: 12, best: 200000, isBest: false } });
+    check('hud: daily non-best shows standing best, no blink',
+      !document.getElementById('brag-daily')!.classList.contains('newbest') &&
+      document.getElementById('brag-daily')!.textContent!.includes('200,000'));
     document.getElementById('gameover-overlay')!.classList.add('hidden');
 
     // boss bar + warning

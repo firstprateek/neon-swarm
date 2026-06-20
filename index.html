@@ -58,6 +58,14 @@
     .title { font-size: 56px; letter-spacing: 12px; color: #eaffff; text-shadow: 0 0 24px var(--accent), 0 0 60px var(--accent); }
     .subtitle { font-size: 14px; color: #8fb8c4; letter-spacing: 3px; }
     .blink { animation: blink 1.2s infinite; font-size: 16px; color: var(--accent); letter-spacing: 4px; margin-top: 24px; }
+    .start-modes { display: flex; gap: 18px; margin-top: 30px; flex-wrap: wrap; justify-content: center; }
+    .mode-btn { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 210px; padding: 18px 26px; font-family: inherit; background: rgba(8,14,20,0.6); color: var(--accent); border: 1px solid var(--accent); cursor: pointer; transition: box-shadow .15s, background .15s, transform .1s; }
+    .mode-btn:hover { background: rgba(94,242,255,0.12); box-shadow: 0 0 22px rgba(94,242,255,0.45); transform: translateY(-2px); }
+    .mode-btn .mode-main { font-size: 18px; letter-spacing: 3px; }
+    .mode-btn .mode-sub { font-size: 11px; letter-spacing: 2px; color: #7fa6b2; }
+    .mode-btn.daily { color: #ffd24a; border-color: rgba(255,200,74,0.7); background: rgba(30,22,8,0.6); }
+    .mode-btn.daily:hover { background: rgba(255,200,74,0.14); box-shadow: 0 0 24px rgba(255,180,40,0.5); }
+    .mode-btn.daily .mode-sub { color: #b89a52; }
     @keyframes blink { 50% { opacity: 0.25; } }
 
     .avatar-cards { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; max-width: 92vw; }
@@ -90,6 +98,8 @@
     .brag-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; font-size: 13px; color: #a8ccd6; text-align: left; }
     .brag-grid b { color: var(--accent); float: right; }
     .brag-seed { font-size: 11px; letter-spacing: 2px; color: #5f8a96; margin-top: 14px; }
+    .brag-daily { font-size: 13px; letter-spacing: 3px; color: #ffd24a; margin: -6px 0 14px; }
+    .brag-daily.newbest { color: #44ff99; text-shadow: 0 0 14px rgba(68,255,153,0.6); animation: blink 1s infinite; }
     .gostats { font-size: 15px; line-height: 2.1; text-align: center; color: #a8ccd6; }
     .gostats b { color: var(--accent); }
     #restart-btn {
@@ -160,7 +170,17 @@
   <div id="start-overlay" class="overlay">
     <div class="title">NEON SWARM</div>
     <div class="subtitle">WASD / ARROWS TO MOVE &nbsp;·&nbsp; WEAPONS AUTO-FIRE &nbsp;·&nbsp; SURVIVE</div>
-    <div class="blink">CLICK TO START</div>
+    <div class="start-modes">
+      <button id="daily-btn" class="mode-btn daily">
+        <span class="mode-main">☀ DAILY CHALLENGE</span>
+        <span class="mode-sub" id="daily-sub">everyone, same run</span>
+      </button>
+      <button id="freeplay-btn" class="mode-btn">
+        <span class="mode-main">▶ FREE PLAY</span>
+        <span class="mode-sub" id="freeplay-sub">fresh random run</span>
+      </button>
+    </div>
+    <div class="blink" id="start-hint">D&nbsp;DAILY &nbsp;·&nbsp; F&nbsp;FREE PLAY</div>
   </div>
 
   <div id="avatar-overlay" class="overlay hidden">
@@ -177,9 +197,10 @@
   <div id="gameover-overlay" class="overlay hidden">
     <div class="death-title">CONSUMED</div>
     <div id="brag-card">
-      <div class="brag-label">NEON SWARM</div>
+      <div class="brag-label" id="brag-label">NEON SWARM</div>
       <div class="brag-score" id="brag-score">0</div>
       <div class="brag-sub" id="brag-sub"></div>
+      <div class="brag-daily hidden" id="brag-daily"></div>
       <div class="brag-grid" id="go-stats"></div>
       <div class="brag-seed" id="brag-seed"></div>
     </div>

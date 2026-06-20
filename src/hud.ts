@@ -245,17 +245,61 @@ export function bossWarning(): void {
   bossWarnTimer = 2.4;
 }
 
-export function showStart(onStart: () => void): void {
-  const begin = () => {
-    startOverlay.classList.add('hidden');
+export interface StartConfig {
+  /** non-null => arrived via a ?seed= challenge link (skip the daily/free choice) */
+  challengeSeed: number | null;
+  daily: { num: number; best: number };
+  onDaily: () => void;
+  onFreePlay: () => void;
+}
+
+/** title screen: pick DAILY (global same-seed run) or FREE PLAY; challenge links accept-and-go */
+export function showStart(cfg: StartConfig): void {
+  const dailyBtn = el<HTMLButtonElement>('daily-btn');
+  const freeBtn = el<HTMLButtonElement>('freeplay-btn');
+  const hint = el('start-hint');
+  const main = (b: HTMLElement) => b.querySelector('.mode-main') as HTMLElement;
+  const sub = (b: HTMLElement) => b.querySelector('.mode-sub') as HTMLElement;
+  let done = false;
+  const choose = (fn: () => void) => {
+    if (done) return;
+    done = true;
     window.removeEventListener('keydown', keyHandler);
-    onStart();
+    startOverlay.classList.add('hidden');
+    fn();
   };
   const keyHandler = (e: KeyboardEvent) => {
-    if (e.code === 'Space' || e.code === 'Enter') begin();
+    if (cfg.challengeSeed != null) {
+      if (e.code === 'Space' || e.code === 'Enter') choose(cfg.onFreePlay);
+    } else if (e.code === 'KeyF') {
+      choose(cfg.onFreePlay);
+    } else if (e.code === 'Space' || e.code === 'Enter' || e.code === 'KeyD') {
+      choose(cfg.onDaily); // Enter = the headline (daily) mode
+    }
   };
-  startOverlay.addEventListener('click', begin, { once: true });
+
+  if (cfg.challengeSeed != null) {
+    // challenge link: one accept button, drop straight into their exact seed
+    dailyBtn.classList.add('hidden');
+    main(freeBtn).textContent = '⚔ ACCEPT CHALLENGE';
+    sub(freeBtn).textContent = `seed #${cfg.challengeSeed} · beat their run`;
+    freeBtn.onclick = () => choose(cfg.onFreePlay);
+    hint.textContent = 'ENTER / CLICK TO DEPLOY';
+  } else {
+    dailyBtn.classList.remove('hidden');
+    main(dailyBtn).textContent = '☀ DAILY CHALLENGE';
+    sub(dailyBtn).textContent =
+      cfg.daily.best > 0
+        ? `Daily #${cfg.daily.num} · your best ${cfg.daily.best.toLocaleString()}`
+        : `Daily #${cfg.daily.num} · everyone, same run`;
+    dailyBtn.onclick = () => choose(cfg.onDaily);
+    main(freeBtn).textContent = '▶ FREE PLAY';
+    sub(freeBtn).textContent = 'fresh random run';
+    freeBtn.onclick = () => choose(cfg.onFreePlay);
+    hint.textContent = 'D DAILY · F FREE PLAY';
+  }
   window.addEventListener('keydown', keyHandler);
+  startOverlay.classList.remove('hidden');
 }
 
 export function showLevelUp(choices: Upgrade[], onPick: (u: Upgrade) => void): void {
@@ -331,16 +375,34 @@ export function showPause(): void { pauseOverlay.classList.remove('hidden'); }
 export function hidePause(): void { pauseOverlay.classList.add('hidden'); }
 export function isPauseOpen(): boolean { return !pauseOverlay.classList.contains('hidden'); }
 
-export interface RunInfo { survivor: string; seed: number; shareUrl: string }
+export interface RunInfo {
+  survivor: string;
+  seed: number;
+  shareUrl: string;
+  /** present when the run was today's Daily Challenge */
+  daily?: { num: number; best: number; isBest: boolean } | null;
+}
 
 export function showGameOver(state: GameState, info: RunInfo): void {
   const mins = (state.time / 60) | 0;
   const secs = (state.time % 60) | 0;
   const time = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   const peakMult = (1 + Math.min(state.comboPeak, 40) * 0.1).toFixed(1);
+  const daily = info.daily;
 
+  el('brag-label').textContent = daily ? `☀ DAILY #${daily.num}` : 'NEON SWARM';
   el('brag-score').textContent = state.score.toLocaleString();
   el('brag-sub').textContent = `${info.survivor} · PEAK ×${peakMult}`;
+
+  const dailyEl = el('brag-daily');
+  if (daily) {
+    dailyEl.classList.remove('hidden');
+    dailyEl.classList.toggle('newbest', daily.isBest);
+    dailyEl.textContent = daily.isBest ? '★ NEW DAILY BEST!' : `DAILY BEST ${daily.best.toLocaleString()}`;
+  } else {
+    dailyEl.classList.add('hidden');
+  }
+
   goStats.className = 'brag-grid';
   goStats.innerHTML =
     `<div>SURVIVED <b>${time}</b></div>` +
@@ -349,7 +411,9 @@ export function showGameOver(state: GameState, info: RunInfo): void {
     `<div>PEAK COMBO <b>${state.comboPeak}</b></div>`;
   el('brag-seed').textContent = `SEED #${info.seed}`;
 
-  const shareText = `I scored ${state.score.toLocaleString()} in NEON SWARM 🧟 — same seed, can you beat my run? ${info.shareUrl}`;
+  const shareText = daily
+    ? `I scored ${state.score.toLocaleString()} on NEON SWARM ☀ Daily #${daily.num} 🧟 — same run for everyone today, can you beat me? ${info.shareUrl}`
+    : `I scored ${state.score.toLocaleString()} in NEON SWARM 🧟 — same seed, can you beat my run? ${info.shareUrl}`;
   const shareBtn = el<HTMLButtonElement>('share-btn');
   shareBtn.textContent = '⚔ CHALLENGE A FRIEND';
   shareBtn.onclick = async () => {
