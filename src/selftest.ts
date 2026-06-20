@@ -8,6 +8,7 @@ import { SpatialGrid } from './spatial';
 import { Swarm, ENEMY_TYPES, BOSS_TYPE, HIT_FLASH } from './swarm';
 import { Bullets, Gems, Particles, Missiles } from './combat';
 import { Blast } from './fx';
+import { AmbientMotes } from './ambient';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize } from './director';
 import { setSeed, srand, getSeed, clearSeed } from './rng';
@@ -288,6 +289,26 @@ function run(): void {
     for (let t = 0; t < 80; t++) blast.update(1 / 60); // run past the longest layer (~0.9s+0.18 delay)
     const allHidden = scene.children.every(o => !(o as THREE.Mesh).isMesh || !o.visible);
     check('fx: blast finishes, goes idle, hides meshes', !blast.active && allHidden);
+  }
+
+  // ---------- Ambient motes (atmosphere) ----------
+  {
+    const scene = new THREE.Scene();
+    const am = new AmbientMotes(120, scene);
+    check('ambient: builds hidden at 0 count', am.count === 0 && am.mesh.visible === false && am.max === 120);
+    am.setBudget(80);
+    check('ambient: setBudget activates + shows', am.count === 80 && am.mesh.count === 80 && am.mesh.visible);
+    am.setBudget(999);
+    check('ambient: setBudget clamps to max', am.count === 120);
+    const arr = am.mesh.instanceMatrix.array as Float32Array;
+    const before = Array.from(arr.slice(0, 16));
+    const ver0 = am.mesh.instanceMatrix.version;
+    am.update(1 / 60, 0, 0, 0.5);
+    const after = Array.from(arr.slice(0, 16));
+    check('ambient: update writes instance matrices + flags upload', before.join(',') !== after.join(',') && am.mesh.instanceMatrix.version > ver0);
+    am.setBudget(0);
+    am.update(1 / 60, 0, 0, 0.5); // must early-return without throwing
+    check('ambient: 0 budget hides + no-ops', am.count === 0 && !am.mesh.visible);
   }
 
   // ---------- Input: analog touch override ----------

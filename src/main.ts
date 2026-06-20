@@ -13,6 +13,7 @@ import { SpatialGrid } from './spatial';
 import { Swarm, ENEMY_TYPES, BOSS_TYPE, HIT_FLASH } from './swarm';
 import { Bullets, Gems, Particles, Missiles } from './combat';
 import { Blast } from './fx';
+import { AmbientMotes } from './ambient';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize, BOSS_INTERVAL } from './director';
 import { createQuality, governQuality, QUALITY_TIERS, MAX_TIER } from './perf';
@@ -230,6 +231,7 @@ async function start() {
   const particles = new Particles(8192, scene);
   const missiles = new Missiles(24, scene);
   const blast = new Blast(scene); // cinematic nuke detonation FX
+  const ambient = new AmbientMotes(260, scene); // drifting ash + embers (tiered in applyQuality)
   const orbitals = new Orbitals(6, scene);
   const tesla = new Tesla(64, scene);
   const grid = new SpatialGrid(2.5, 96, MAX_ENEMIES);
@@ -288,6 +290,7 @@ async function start() {
     // atmosphere tiers DOWN with the governor so the 120fps target always wins
     gradeAmt.value = quality.tier <= 1 ? 1.0 : quality.tier === 2 ? 0.6 : 0.0;
     uDetail.value = quality.tier <= 1 ? 1.0 : quality.tier === 2 ? 0.5 : 0.0;
+    ambient.setBudget([260, 160, 90, 0][quality.tier] ?? 160); // ash count tiers down (0 on low)
     const gov = pinnedTier >= 0 ? 'fixed' : `${targetFps}fps target`;
     hud.setBackend(`${onWebGPU() ? 'WebGPU' : 'WebGL2'}${backendNote} · ${gov} · quality: ${tq.label}${bloomEnabled ? '' : ' (no bloom)'}`);
   }
@@ -883,6 +886,7 @@ async function start() {
         if (started && !over && !leveling && !paused) { tickRealtime(dt); update(dt); }
         else if (over) particles.update(dt);
         blast.update(dt);
+        ambient.update(dt, camera.position.x, camera.position.z, i / 60);
         hud.tick(dt);
         if (touch) { if (canAct()) touch.show(); else touch.hide(); }
       }
@@ -1059,6 +1063,7 @@ async function start() {
     if (started && !over && !leveling && !paused) { tickRealtime(dt); update(simDt); }
     else if (over) particles.update(simDt); // let the death explosion play out
     blast.update(dt); // real-time so the nuke FX plays out through hit-stop / level-up
+    ambient.update(dt, camera.position.x, camera.position.z, now / 1000); // the dead world keeps breathing
     hud.tick(dt);
     if (touch) { if (canAct()) touch.show(); else touch.hide(); } // show only during active play
 
