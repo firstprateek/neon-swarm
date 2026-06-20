@@ -641,6 +641,7 @@ function run(): void {
     check('settings: garbage control flags fall back to true', (() => { const g = mergeSettings({ autoFire: 'x', gunLock: 1, missileLock: null }); return g.autoFire && g.gunLock && g.missileLock; })());
     check('settings: valid control flags preserved', (() => { const g = mergeSettings({ autoFire: false, gunLock: false, missileLock: true }); return g.autoFire === false && g.gunLock === false && g.missileLock === true; })());
     check('settings: music clamps 0..100', mergeSettings({ music: 250 }).music === 100 && mergeSettings({ music: -5 }).music === 0);
+    check('settings: zoom defaults to 1 and clamps to range', d.zoom === 1 && mergeSettings({ zoom: 5 }).zoom === 1.9 && mergeSettings({ zoom: 0.1 }).zoom === 0.55 && mergeSettings({ zoom: 1.3 }).zoom === 1.3);
     check('settings: merge round-trips defaults (no missing/extra field)', JSON.stringify(mergeSettings(defaultSettings())) === JSON.stringify(d));
   }
 

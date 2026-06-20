@@ -28,6 +28,7 @@ Pick **☀ Daily Challenge** or **▶ Free Play**, choose a survivor, then survi
 | `Shift` | **Dash** — short burst with i-frames (cooldown) |
 | `Esc` | Pause / settings |
 | `M` | Mute |
+| mouse wheel / `+` `-` | **Zoom** the camera out (more field) or in (more survivor) — desktop |
 
 All gameplay keys are **remappable** in Settings. Collect green XP gems, pick an upgrade on each level-up, and push your score. Bigger enemies are worth more; chaining kills builds a score **combo** multiplier. Bosses arrive on a timer and drop ammo restocks.
 

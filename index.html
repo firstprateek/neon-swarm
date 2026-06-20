@@ -53,6 +53,7 @@
     #abilities .ab b { color: var(--accent); }
     #abilities .ab.ready b { color: #44ff99; }
     #abilities .ab.empty b { color: #ff5566; }
+    #abilities .ab-key { opacity: .55; }
     body.touch #abilities { display: none; } /* on-screen buttons carry their own badges */
 
     /* ---- mobile touch layer (between HUD z=10 and overlays z=20) ---- */
@@ -256,9 +257,9 @@
       FPS <b id="fps-txt">--</b>
     </div>
     <div id="abilities">
-      <div class="ab" id="ab-missile">🚀 MISSILE <b>3</b> <span style="opacity:.6">[SPACE]</span></div>
-      <div class="ab" id="ab-nuke">☢ NUKE <b>1</b> <span style="opacity:.6">[Q]</span></div>
-      <div class="ab" id="ab-dash">⟫ DASH <b>READY</b> <span style="opacity:.6">[SHIFT]</span></div>
+      <div class="ab" id="ab-missile">🚀 MISSILE <b>3</b> <span class="ab-key" id="ab-missile-key"></span></div>
+      <div class="ab" id="ab-nuke">☢ NUKE <b>1</b> <span class="ab-key" id="ab-nuke-key"></span></div>
+      <div class="ab" id="ab-dash">⟫ DASH <b>READY</b> <span class="ab-key" id="ab-dash-key"></span></div>
     </div>
     <div id="backend-txt"></div>
     <div id="boss-wrap" class="hidden">
@@ -406,6 +407,8 @@
           </select>
         </label>
         <label>BLOOM <input type="checkbox" id="set-bloom" /></label>
+        <label>ZOOM <input type="range" id="set-zoom" min="55" max="190" /></label>
+        <div class="set-hint">desktop: mouse wheel or <b>+</b> / <b>−</b> to zoom in / out</div>
       </section>
     </div>
     <div class="pause-buttons">

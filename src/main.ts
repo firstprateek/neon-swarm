@@ -15,7 +15,7 @@ import { Blast } from './fx';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize, BOSS_INTERVAL } from './director';
 import { createQuality, governQuality, QUALITY_TIERS, MAX_TIER } from './perf';
-import { loadSettings, saveSettings, qualityTier, applyPreset, type Settings, type QualityMode } from './settings';
+import { loadSettings, saveSettings, qualityTier, applyPreset, clampZoom, type Settings, type QualityMode } from './settings';
 import { AVATARS, makeSurvivor } from './avatars';
 import { setSeed, getSeed, randomSeed, srand } from './rng';
 import { dailySeed, dailyNumber, getDailyBest, recordDailyScore } from './daily';
@@ -369,6 +369,7 @@ async function start() {
   const soundChk = byId<HTMLInputElement>('set-sound');
   const volRange = byId<HTMLInputElement>('set-volume');
   const musicRange = byId<HTMLInputElement>('set-music');
+  const zoomRange = byId<HTMLInputElement>('set-zoom');
   const autofireChk = byId<HTMLInputElement>('set-autofire');
   const gunlockChk = byId<HTMLInputElement>('set-gunlock');
   const misslockChk = byId<HTMLInputElement>('set-misslock');
@@ -394,7 +395,15 @@ async function start() {
   function syncKeyControls(): void {
     buildKeyRows();
     for (const a of KEY_ACTIONS) (keyRows.get(a)!.querySelector('kbd') as HTMLElement).textContent = keyLabel(settings.keybinds[a]);
+    updateKeyHints();
   }
+  // keep the in-game ability HUD's key hints in sync with the (remappable) bindings
+  function updateKeyHints(): void {
+    byId('ab-missile-key').textContent = `[${keyLabel(settings.keybinds.missile)}]`;
+    byId('ab-nuke-key').textContent = `[${keyLabel(settings.keybinds.nuke)}]`;
+    byId('ab-dash-key').textContent = `[${keyLabel(settings.keybinds.dash)}]`;
+  }
+  updateKeyHints(); // initial paint (before any settings open)
   let capturing = false;
   function captureKey(action: KeyAction, row: HTMLButtonElement): void {
     if (controlsLocked() || capturing) return;
@@ -426,6 +435,7 @@ async function start() {
     qSel.value = settings.quality;
     fpsSel.value = String(settings.fps);
     bloomChk.checked = settings.bloom;
+    zoomRange.value = String(Math.round(settings.zoom * 100));
     soundChk.checked = settings.sound;
     volRange.value = String(settings.volume);
     musicRange.value = String(settings.music);
@@ -470,6 +480,7 @@ async function start() {
   soundChk.addEventListener('change', () => { settings.sound = soundChk.checked; applySettings(); });
   volRange.addEventListener('input', () => { settings.volume = Number(volRange.value); applySettings(); });
   musicRange.addEventListener('input', () => { settings.music = Number(musicRange.value); applySettings(); });
+  zoomRange.addEventListener('input', () => { settings.zoom = clampZoom(Number(zoomRange.value) / 100); saveSettings(settings); });
 
   // settings overlay (shared by title gear + pause)
   function settingsOpen(): boolean { return !settingsOverlay.classList.contains('hidden'); }
@@ -705,6 +716,16 @@ async function start() {
     else if (a === 'dash' || e.code === 'ShiftRight') { if (!e.repeat) doDash(); } // ShiftRight = fixed dash alias
   });
 
+  // desktop camera zoom — mouse wheel (during play) + persist held-key zoom on release
+  const ZOOM_KEYS = new Set(['Equal', 'Minus', 'NumpadAdd', 'NumpadSubtract']);
+  window.addEventListener('wheel', e => {
+    if (isTouch || !canAct()) return; // only during active play; never steals scroll from menus
+    e.preventDefault();
+    settings.zoom = clampZoom(settings.zoom + Math.sign(e.deltaY) * 0.1); // wheel down = zoom out (more field)
+    saveSettings(settings);
+  }, { passive: false });
+  window.addEventListener('keyup', e => { if (ZOOM_KEYS.has(e.code)) saveSettings(settings); });
+
   // wall-clock ability cooldown + missile refill (unaffected by hit-stop slow-mo)
   function tickRealtime(rdt: number): void {
     if (dashCd > 0) dashCd -= rdt;
@@ -851,8 +872,18 @@ async function start() {
       player.rotation.z = -mv.x * 0.12;
     }
 
-    camera.position.x += (player.position.x - camera.position.x) * Math.min(1, dt * 5);
-    camera.position.z += (player.position.z + 15 - camera.position.z) * Math.min(1, dt * 5);
+    // keyboard zoom (held +/-), desktop only — '+' zooms IN (closer), '-' zooms OUT
+    if (!isTouch) {
+      const held = heldKeys();
+      const zr = 0.9 * dt;
+      if (held.has('Equal') || held.has('NumpadAdd')) settings.zoom = clampZoom(settings.zoom - zr);
+      if (held.has('Minus') || held.has('NumpadSubtract')) settings.zoom = clampZoom(settings.zoom + zr);
+    }
+    // zoom = dolly the follow-cam along its angle (height 26 + back 15 scaled together)
+    const zlerp = Math.min(1, dt * 5);
+    camera.position.x += (player.position.x - camera.position.x) * zlerp;
+    camera.position.y += (26 * settings.zoom - camera.position.y) * zlerp;
+    camera.position.z += (player.position.z + 15 * settings.zoom - camera.position.z) * zlerp;
     // transient, zero-mean screen-shake offset (re-centered by the lerp next frame)
     if (shake > 0.001) {
       camera.position.x += (Math.random() * 2 - 1) * shake;
