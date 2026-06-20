@@ -63,8 +63,9 @@ export const MISSILE_DMG = 55;
 export const MISSILE_AOE = 6.5;
 export const NUKE_DMG = 100000; // effectively clears the screen
 
-/** base score per enemy type index (grunt, runner, tank, elite, boss) */
-export const SCORE_BY_TYPE = [1, 1, 5, 20, 250];
+/** base score per enemy type index (grunt, runner, tank, elite, boss) —
+ * tougher/faster enemies reward more (runner > grunt, per playtest feedback) */
+export const SCORE_BY_TYPE = [1, 2, 6, 25, 300];
 const COMBO_WINDOW = 2.5; // seconds before the combo resets
 const COMBO_CAP = 40;     // combo count beyond which the multiplier stops growing
 
