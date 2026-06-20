@@ -377,6 +377,21 @@ async function start() {
   }
   let prevBossHp = -1, bossDmgAccum = 0, bossDmgTimer = 0;
 
+  // combo-milestone celebrations
+  const COMBO_MILESTONES = [10, 25, 50, 100, 200];
+  let comboMilestoneIdx = 0;
+  function checkComboMilestones(): void {
+    if (state.combo === 0) { comboMilestoneIdx = 0; return; }
+    while (comboMilestoneIdx < COMBO_MILESTONES.length && state.combo >= COMBO_MILESTONES[comboMilestoneIdx]) {
+      const mult = (1 + Math.min(state.combo, 40) * 0.1).toFixed(1);
+      const sp = projectToScreen(player.position.x, 3, player.position.z);
+      if (sp) hud.floatText(sp.sx, sp.sy - 40, `✦ ${COMBO_MILESTONES[comboMilestoneIdx]} COMBO  ×${mult} ✦`, '#ff8af0');
+      sfx.sfxLevelUp();
+      addShake(0.3);
+      comboMilestoneIdx++;
+    }
+  }
+
   /** Track the toughest living boss for the HUD bar + floating damage numbers. */
   function updateBossBar(dt: number): void {
     if (activeBosses <= 0) { hud.hideBoss(); prevBossHp = -1; return; }
@@ -579,6 +594,7 @@ async function start() {
       }
     });
 
+    checkComboMilestones();
     gems.update(dt, state.time, player.position.x, player.position.z, state.magnet, v => { grantXp(state, v); sfx.sfxPickup(); });
     particles.update(dt);
 
