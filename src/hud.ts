@@ -29,11 +29,17 @@ const scoreTxt = el('score');
 const comboTxt = el('combo');
 const floatersEl = el('floaters');
 const toastEl = el('toast');
+const flashEl = el('flash');
+const abMissile = el('ab-missile');
+const abNuke = el('ab-nuke');
+const abDash = el('ab-dash');
 
 let vignetteOpacity = 0;
 let bossWarnTimer = 0;
 let lastBossQ = -1;
 let toastTimer = 0;
+let flashOpacity = 0;
+const lastAb = { m: -1, n: -1, d: -1 };
 
 // --- pooled floating text (e.g. boss damage numbers) ---
 interface Floater { el: HTMLSpanElement; x: number; y: number; life: number; maxLife: number }
@@ -171,6 +177,40 @@ export function tick(dt: number): void {
     toastTimer -= dt;
     if (toastTimer < 0.4) toastEl.style.opacity = Math.max(0, toastTimer / 0.4).toFixed(2);
     if (toastTimer <= 0) toastEl.classList.add('hidden');
+  }
+  if (flashOpacity > 0.005) {
+    flashOpacity *= Math.pow(0.0015, dt);
+    flashEl.style.opacity = flashOpacity.toFixed(3);
+    if (flashOpacity <= 0.005) flashEl.classList.add('hidden');
+  }
+}
+
+/** fullscreen flash (nuke, big events) that fades out */
+export function flash(color = '#ffffff', peak = 0.6): void {
+  flashEl.style.background = color;
+  flashOpacity = peak;
+  flashEl.style.opacity = peak.toFixed(3);
+  flashEl.classList.remove('hidden');
+}
+
+/** ability HUD: missile/nuke counts + dash readiness (dirty-checked) */
+export function setAbilities(missiles: number, nukes: number, dashReady: boolean): void {
+  if (missiles !== lastAb.m) {
+    lastAb.m = missiles;
+    abMissile.querySelector('b')!.textContent = String(missiles);
+    abMissile.classList.toggle('empty', missiles === 0);
+  }
+  if (nukes !== lastAb.n) {
+    lastAb.n = nukes;
+    abNuke.querySelector('b')!.textContent = String(nukes);
+    abNuke.classList.toggle('empty', nukes === 0);
+  }
+  const d = dashReady ? 1 : 0;
+  if (d !== lastAb.d) {
+    lastAb.d = d;
+    abDash.querySelector('b')!.textContent = dashReady ? 'READY' : '·····';
+    abDash.classList.toggle('ready', dashReady);
+    abDash.classList.toggle('empty', !dashReady);
   }
 }
 

@@ -243,6 +243,150 @@ export class Gems {
   }
 }
 
+/**
+ * Player-fired homing rockets (the Space ability). Each re-acquires the nearest
+ * enemy via a cheap grid-local search, steers toward it, and detonates for area
+ * damage on proximity or timeout. Pooled + instanced like everything else.
+ */
+export class Missiles {
+  readonly max: number;
+  count = 0;
+  readonly px: Float32Array;
+  readonly pz: Float32Array;
+  readonly vx: Float32Array;
+  readonly vz: Float32Array;
+  readonly life: Float32Array;
+  readonly dmg: Float32Array;
+  readonly aoe: Float32Array;
+  readonly mesh: THREE.InstancedMesh;
+  private readonly speed = 26;
+
+  constructor(max: number, scene: THREE.Scene) {
+    this.max = max;
+    this.px = new Float32Array(max);
+    this.pz = new Float32Array(max);
+    this.vx = new Float32Array(max);
+    this.vz = new Float32Array(max);
+    this.life = new Float32Array(max);
+    this.dmg = new Float32Array(max);
+    this.aoe = new Float32Array(max);
+    const geo = new THREE.ConeGeometry(0.28, 0.9, 6);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffc24a });
+    this.mesh = new THREE.InstancedMesh(geo, mat, max);
+    this.mesh.frustumCulled = false;
+    this.mesh.visible = false;
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    scene.add(this.mesh);
+  }
+
+  private syncDraw(): void { this.mesh.count = this.count; this.mesh.visible = this.count > 0; }
+
+  fire(x: number, z: number, dirX: number, dirZ: number, dmg: number, aoe: number): void {
+    if (this.count >= this.max) return;
+    const i = this.count++;
+    this.px[i] = x; this.pz[i] = z;
+    this.vx[i] = dirX * this.speed; this.vz[i] = dirZ * this.speed;
+    this.life[i] = 2.4; this.dmg[i] = dmg; this.aoe[i] = aoe;
+    this.syncDraw();
+  }
+
+  private remove(i: number): void {
+    const last = --this.count;
+    if (i !== last) {
+      this.px[i] = this.px[last]; this.pz[i] = this.pz[last];
+      this.vx[i] = this.vx[last]; this.vz[i] = this.vz[last];
+      this.life[i] = this.life[last]; this.dmg[i] = this.dmg[last]; this.aoe[i] = this.aoe[last];
+    }
+    this.syncDraw();
+  }
+
+  /** grid-local nearest living enemy to (x,z), or -1 */
+  private nearestNear(x: number, z: number, swarm: Swarm, grid: SpatialGrid): number {
+    const { cellStart, indices, dim } = grid;
+    const cx = grid.cellX(x), cz = grid.cellZ(z);
+    let best = -1, bestD2 = Infinity;
+    for (let gz = Math.max(0, cz - 3); gz <= Math.min(dim - 1, cz + 3); gz++) {
+      for (let gx = Math.max(0, cx - 3); gx <= Math.min(dim - 1, cx + 3); gx++) {
+        const c = gz * dim + gx;
+        for (let k = cellStart[c]; k < cellStart[c + 1]; k++) {
+          const j = indices[k];
+          if (j >= swarm.count || swarm.hp[j] <= 0) continue;
+          const dx = swarm.posX[j] - x, dz = swarm.posZ[j] - z;
+          const d2 = dx * dx + dz * dz;
+          if (d2 < bestD2) { bestD2 = d2; best = j; }
+        }
+      }
+    }
+    return best;
+  }
+
+  /** detonate: area damage to all enemies within aoe of (x,z) */
+  private detonate(x: number, z: number, dmg: number, aoe: number, swarm: Swarm, grid: SpatialGrid, particles: Particles, onBoom: (x: number, z: number) => void): void {
+    const { cellStart, indices, dim } = grid;
+    const cells = Math.ceil(aoe / grid.cellSize) + 1;
+    const cx = grid.cellX(x), cz = grid.cellZ(z);
+    const a2 = aoe * aoe;
+    for (let gz = Math.max(0, cz - cells); gz <= Math.min(dim - 1, cz + cells); gz++) {
+      for (let gx = Math.max(0, cx - cells); gx <= Math.min(dim - 1, cx + cells); gx++) {
+        const c = gz * dim + gx;
+        for (let k = cellStart[c]; k < cellStart[c + 1]; k++) {
+          const j = indices[k];
+          if (j >= swarm.count || swarm.hp[j] <= 0) continue;
+          const dx = swarm.posX[j] - x, dz = swarm.posZ[j] - z;
+          if (dx * dx + dz * dz <= a2) { swarm.hp[j] -= dmg; swarm.flash[j] = HIT_FLASH; }
+        }
+      }
+    }
+    particles.burst(x, 0.6, z, new THREE.Color(0xffd27a), 60, 16);
+    onBoom(x, z);
+  }
+
+  update(dt: number, swarm: Swarm, grid: SpatialGrid, particles: Particles, onBoom: (x: number, z: number) => void): void {
+    const { px, pz, vx, vz, life, dmg, aoe, speed } = this;
+    const m = this.mesh.instanceMatrix.array as Float32Array;
+    for (let i = this.count - 1; i >= 0; i--) {
+      life[i] -= dt;
+      // home toward the nearest enemy (limited turn)
+      const tgt = this.nearestNear(px[i], pz[i], swarm, grid);
+      if (tgt >= 0) {
+        const dx = swarm.posX[tgt] - px[i], dz = swarm.posZ[tgt] - pz[i];
+        const d = Math.sqrt(dx * dx + dz * dz) + 1e-6;
+        const desiredX = (dx / d) * speed, desiredZ = (dz / d) * speed;
+        const turn = Math.min(1, dt * 6);
+        vx[i] += (desiredX - vx[i]) * turn;
+        vz[i] += (desiredZ - vz[i]) * turn;
+        // detonate on close approach
+        if (d < swarm.radius[tgt] + 1.2) {
+          this.detonate(px[i], pz[i], dmg[i], aoe[i], swarm, grid, particles, onBoom);
+          this.remove(i);
+          continue;
+        }
+      }
+      if (life[i] <= 0) {
+        this.detonate(px[i], pz[i], dmg[i], aoe[i], swarm, grid, particles, onBoom);
+        this.remove(i);
+        continue;
+      }
+      const nx = (px[i] += vx[i] * dt), nz = (pz[i] += vz[i] * dt);
+      // lay the +Y cone flat with its tip pointing along the horizontal velocity:
+      // local Y -> velocity dir, local Z -> world up, local X -> their cross
+      const vlen = Math.sqrt(vx[i] * vx[i] + vz[i] * vz[i]) + 1e-6;
+      const ux = vx[i] / vlen, uz = vz[i] / vlen;
+      const o = i * 16;
+      m[o] = -uz; m[o + 1] = 0; m[o + 2] = ux; m[o + 3] = 0;     // col0 = X
+      m[o + 4] = ux; m[o + 5] = 0; m[o + 6] = uz; m[o + 7] = 0;  // col1 = Y (tip)
+      m[o + 8] = 0; m[o + 9] = 1; m[o + 10] = 0; m[o + 11] = 0;  // col2 = Z (up)
+      m[o + 12] = nx; m[o + 13] = 0.7; m[o + 14] = nz; m[o + 15] = 1;
+    }
+    if (this.count > 0) {
+      const im = this.mesh.instanceMatrix;
+      im.clearUpdateRanges();
+      im.addUpdateRange(0, this.count * 16);
+      im.needsUpdate = true;
+    }
+  }
+}
+
 /** Short-lived explosion shards for kill feedback. */
 export class Particles {
   readonly max: number;

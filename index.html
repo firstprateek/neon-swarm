@@ -39,6 +39,14 @@
     #backend-txt { position: absolute; bottom: 10px; right: 14px; font-size: 11px; color: #4a6a78; letter-spacing: 1px; }
 
     #vignette { position: absolute; inset: 0; box-shadow: inset 0 0 140px 50px rgba(255, 40, 60, 0.9); opacity: 0; }
+    #flash { position: absolute; inset: 0; background: #fff; opacity: 0; }
+    #flash.hidden { display: none; }
+
+    #abilities { position: absolute; bottom: 14px; left: 16px; font-size: 13px; letter-spacing: 1px; line-height: 1.8; }
+    #abilities .ab { color: #6a8a96; }
+    #abilities .ab b { color: var(--accent); }
+    #abilities .ab.ready b { color: #44ff99; }
+    #abilities .ab.empty b { color: #ff5566; }
 
     .overlay {
       position: absolute; inset: 0; display: flex; flex-direction: column;
@@ -125,6 +133,11 @@
       SWARM <b id="enemies-txt">0</b><br/>
       FPS <b id="fps-txt">--</b>
     </div>
+    <div id="abilities">
+      <div class="ab" id="ab-missile">🚀 MISSILE <b>3</b> <span style="opacity:.6">[SPACE]</span></div>
+      <div class="ab" id="ab-nuke">☢ NUKE <b>1</b> <span style="opacity:.6">[Q]</span></div>
+      <div class="ab" id="ab-dash">⟫ DASH <b>READY</b> <span style="opacity:.6">[SHIFT]</span></div>
+    </div>
     <div id="backend-txt"></div>
     <div id="boss-wrap" class="hidden">
       <div id="boss-name">◆ WARDEN ◆</div>
@@ -133,6 +146,7 @@
     <div id="boss-warn" class="hidden">⚠ BOSS INCOMING ⚠</div>
     <div id="toast" class="hidden"></div>
     <div id="floaters"></div>
+    <div id="flash" class="hidden"></div>
     <div id="vignette"></div>
   </div>
 

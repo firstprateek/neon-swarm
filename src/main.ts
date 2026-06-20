@@ -1,11 +1,12 @@
 import * as THREE from 'three/webgpu';
 import { pass } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
-import { createState, grantXp, rollUpgrades, registerKill, tickCombo, UPGRADES } from './state';
+import { createState, grantXp, rollUpgrades, registerKill, tickCombo, UPGRADES,
+  MISSILE_MAX, NUKE_MAX, MISSILE_REFILL, MISSILE_DMG, MISSILE_AOE, NUKE_DMG } from './state';
 import { getMove } from './input';
 import { SpatialGrid } from './spatial';
-import { Swarm, ENEMY_TYPES, BOSS_TYPE } from './swarm';
-import { Bullets, Gems, Particles } from './combat';
+import { Swarm, ENEMY_TYPES, BOSS_TYPE, HIT_FLASH } from './swarm';
+import { Bullets, Gems, Particles, Missiles } from './combat';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize, BOSS_INTERVAL } from './director';
 import { createQuality, governQuality, QUALITY_TIERS, MAX_TIER } from './perf';
@@ -168,6 +169,7 @@ async function start() {
   const bullets = new Bullets(4096, scene);
   const gems = new Gems(4096, scene);
   const particles = new Particles(8192, scene);
+  const missiles = new Missiles(24, scene);
   const orbitals = new Orbitals(6, scene);
   const tesla = new Tesla(64, scene);
   const grid = new SpatialGrid(2.5, 96, MAX_ENEMIES);
@@ -225,6 +227,13 @@ async function start() {
   let shake = 0; // screen-shake magnitude, decays each frame
   const addShake = (a: number) => { shake = Math.min(2.2, shake + a); };
   let hitStop = 0; // brief slow-mo (seconds of real time) for impact on big events
+  // active abilities
+  let missileRefillTimer = MISSILE_REFILL;
+  let dashCd = 0;     // dash cooldown remaining
+  let dashTime = 0;   // dash burst remaining
+  let dashDirX = 0, dashDirZ = 1;
+  let iframes = 0;    // invulnerability window (during/after dash)
+  const DASH_COOLDOWN = 2.2, DASH_TIME = 0.16, DASH_SPEED = 70, DASH_IFRAMES = 0.3;
 
   // apply persisted audio settings (URL ?mute still wins)
   sfx.setVolume(settings.volume / 100);
@@ -465,6 +474,58 @@ async function start() {
     sfx.sfxFire(); // throttled internally
   }
 
+  // --- active abilities ---
+  function fireMissile(): void {
+    if (state.missiles <= 0) { hud.toast('NO MISSILES'); return; }
+    const px = player.position.x, pz = player.position.z;
+    let dirX = Math.sin(facing), dirZ = Math.cos(facing);
+    const t = swarm.nearest(px, pz);
+    if (t >= 0) { const dx = swarm.posX[t] - px, dz = swarm.posZ[t] - pz; const d = Math.sqrt(dx * dx + dz * dz) + 1e-6; dirX = dx / d; dirZ = dz / d; }
+    missiles.fire(px, pz, dirX, dirZ, MISSILE_DMG, MISSILE_AOE);
+    state.missiles--;
+    addShake(0.2);
+    sfx.sfxFire();
+  }
+
+  function fireNuke(): void {
+    if (state.nukes <= 0) { hud.toast('NO NUKES'); return; }
+    state.nukes--;
+    const px = player.position.x, pz = player.position.z;
+    // clear the visible field; bosses only take a heavy dent
+    for (let i = 0; i < swarm.count; i++) {
+      const dx = swarm.posX[i] - px, dz = swarm.posZ[i] - pz;
+      if (dx * dx + dz * dz < 62 * 62) {
+        swarm.hp[i] -= swarm.type[i] === BOSS_TYPE ? 450 : NUKE_DMG;
+        swarm.flash[i] = HIT_FLASH;
+      }
+    }
+    particles.burst(px, 1, pz, new THREE.Color(0xffffff), 160, 22);
+    hud.flash('#ffffff', 0.85);
+    addShake(2.0);
+    hitStop = 0.14;
+    sfx.sfxBossDie();
+    hud.toast('☢ NUKE');
+  }
+
+  function doDash(): void {
+    if (dashCd > 0) return;
+    const mv = getMove();
+    if (mv.x !== 0 || mv.z !== 0) { dashDirX = mv.x; dashDirZ = mv.z; }
+    else { dashDirX = Math.sin(facing); dashDirZ = Math.cos(facing); }
+    dashTime = DASH_TIME;
+    dashCd = DASH_COOLDOWN;
+    iframes = DASH_IFRAMES;
+    addShake(0.15);
+    sfx.sfxPickup();
+  }
+
+  window.addEventListener('keydown', e => {
+    if (!started || over || leveling || paused) return;
+    if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) fireMissile(); }
+    else if (e.code === 'KeyQ') { if (!e.repeat) fireNuke(); }
+    else if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') { if (!e.repeat) doDash(); }
+  });
+
   function gameOver(): void {
     over = true;
     particles.burst(player.position.x, 1, player.position.z, new THREE.Color(0x44ffee), 160, 16);
@@ -504,6 +565,9 @@ async function start() {
     shake: () => shake,
     addShake,
     hitStop: () => hitStop,
+    missiles, fireMissile, fireNuke, doDash,
+    dashReady: () => dashCd <= 0,
+    iframes: () => iframes,
     audio: () => ({ ready: sfx.audioReady(), muted: sfx.isMuted() }),
     // test hook: feed a synthetic frame time to the governor and apply any tier change
     feedFrame: (frameMs: number) => {
@@ -539,9 +603,24 @@ async function start() {
       glow.intensity = baseGlow * (1 + muzzle * 0.8);
     }
 
+    // ability timers
+    if (dashCd > 0) dashCd -= dt;
+    if (iframes > 0) iframes -= dt;
+    missileRefillTimer -= dt;
+    if (missileRefillTimer <= 0) {
+      if (state.missiles < MISSILE_MAX) state.missiles++;
+      missileRefillTimer = MISSILE_REFILL;
+    }
+
     const mv = getMove();
     player.position.x += mv.x * state.moveSpeed * dt;
     player.position.z += mv.z * state.moveSpeed * dt;
+    // dash burst (fast, brief)
+    if (dashTime > 0) {
+      dashTime -= dt;
+      player.position.x += dashDirX * DASH_SPEED * dt;
+      player.position.z += dashDirZ * DASH_SPEED * dt;
+    }
     if (mv.x !== 0 || mv.z !== 0) {
       const target = Math.atan2(mv.x, mv.z);
       let delta = target - facing;
@@ -564,8 +643,8 @@ async function start() {
 
     grid.build(swarm.posX, swarm.posZ, swarm.count, player.position.x, player.position.z);
     const damage = swarm.update(dt, state.time, player.position.x, player.position.z, grid);
-    if (damage > 0) {
-      if (!godMode) state.hp -= damage;
+    if (damage > 0 && !godMode && iframes <= 0) {
+      state.hp -= damage;
       hud.damageFlash();
       addShake(Math.min(0.6, damage * 0.04));
       sfx.sfxHurt();
@@ -582,6 +661,7 @@ async function start() {
     }
 
     bullets.update(dt, swarm, grid);
+    missiles.update(dt, swarm, grid, particles, () => addShake(0.3));
 
     // secondary weapons read their level from game state each frame
     orbitals.level = state.orbitalLevel;
@@ -603,6 +683,10 @@ async function start() {
         addShake(1.4);
         hitStop = 0.12; // punchy micro-freeze on the kill
         sfx.sfxBossDie();
+        // boss reward: restock the active-ability arsenal
+        state.missiles = MISSILE_MAX;
+        if (state.nukes < NUKE_MAX) state.nukes++;
+        hud.toast('BOSS DOWN — ARSENAL RESTOCKED');
       } else {
         gems.spawn(x, z, xp);
         particles.burst(x, t.radius, z, t.color, type >= 2 ? 26 : 10);
@@ -623,6 +707,7 @@ async function start() {
     if (state.pendingLevels > 0 && !leveling) openLevelUp();
 
     updateBossBar(dt);
+    hud.setAbilities(state.missiles, state.nukes, dashCd <= 0);
     hud.update(state, swarm.count);
   }
 

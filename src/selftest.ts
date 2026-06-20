@@ -6,7 +6,7 @@
 import * as THREE from 'three/webgpu';
 import { SpatialGrid } from './spatial';
 import { Swarm, ENEMY_TYPES, BOSS_TYPE, HIT_FLASH } from './swarm';
-import { Bullets, Gems, Particles } from './combat';
+import { Bullets, Gems, Particles, Missiles } from './combat';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize } from './director';
 import { createQuality, governQuality, MAX_TIER } from './perf';
@@ -229,6 +229,25 @@ function run(): void {
       if (pm[o + 12] !== 7 || pm[o + 13] !== 2 || pm[o + 14] !== -3 || pm[o] === 0) spawnMatricesOk = false;
     }
     check('particles: burst writes spawn matrices immediately', spawnMatricesOk);
+  }
+
+  // ---------- Active ability: Missiles ----------
+  {
+    const scene = new THREE.Scene();
+    const sw = new Swarm(8, scene);
+    sw.spawn(2, 6, 0); // tank at +x, hp 28
+    sw.spawn(0, 7.5, 1); // grunt nearby (should also catch the AoE)
+    const ms = new Missiles(8, scene);
+    const part = new Particles(64, scene);
+    ms.fire(0, 0, 1, 0, 55, 6.5); // launch toward the cluster
+    check('missiles: fire adds one and shows the mesh', ms.count === 1 && ms.mesh.visible);
+    const g = new SpatialGrid(2.5, 32, 8);
+    let boomed = false;
+    for (let t = 0; t < 80 && ms.count > 0; t++) {
+      g.build(sw.posX, sw.posZ, sw.count, 0, 0);
+      ms.update(1 / 60, sw, g, part, () => { boomed = true; });
+    }
+    check('missiles: homes, detonates, AoE damages enemies', sw.hp[0] < 28 && sw.hp[1] < 3 && boomed && ms.count === 0, `hp0=${sw.hp[0]} hp1=${sw.hp[1]} boom=${boomed} count=${ms.count}`);
   }
 
   // ---------- Weapons: Orbital Blades ----------
@@ -580,6 +599,11 @@ function run(): void {
     check('hud: toast appears with text', !document.getElementById('toast')!.classList.contains('hidden') && document.getElementById('toast')!.textContent === 'TEST');
     hud.tick(2); // longer than the 1.6s toast
     check('hud: toast auto-hides', document.getElementById('toast')!.classList.contains('hidden'));
+
+    let abThrew = false;
+    try { hud.flash('#ffffff', 0.6); hud.setAbilities(2, 1, true); hud.setAbilities(0, 0, false); hud.tick(0.5); } catch { abThrew = true; }
+    check('hud: flash + ability HUD update without throwing', !abThrew);
+    check('hud: ability counts render', document.querySelector('#ab-missile b')!.textContent === '0' && document.querySelector('#ab-nuke b')!.textContent === '0');
   }
 }
 

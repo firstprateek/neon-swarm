@@ -22,6 +22,9 @@ export interface GameState {
   score: number;
   combo: number;
   comboTimer: number;
+  // active abilities (limited charges)
+  missiles: number;
+  nukes: number;
 }
 
 export function createState(): GameState {
@@ -47,8 +50,18 @@ export function createState(): GameState {
     score: 0,
     combo: 0,
     comboTimer: 0,
+    missiles: 3,
+    nukes: 1,
   };
 }
+
+// active-ability tuning
+export const MISSILE_MAX = 6;
+export const NUKE_MAX = 3;
+export const MISSILE_REFILL = 11; // seconds per regained missile
+export const MISSILE_DMG = 55;
+export const MISSILE_AOE = 6.5;
+export const NUKE_DMG = 100000; // effectively clears the screen
 
 /** base score per enemy type index (grunt, runner, tank, elite, boss) */
 export const SCORE_BY_TYPE = [1, 1, 5, 20, 250];
