@@ -12,6 +12,7 @@ import { spawnRate, rollEnemyType, bossHp, hordeSize, BOSS_INTERVAL } from './di
 import { createQuality, governQuality, QUALITY_TIERS, MAX_TIER } from './perf';
 import { loadSettings, saveSettings, qualityTier, type Settings, type QualityMode } from './settings';
 import { AVATARS, makeSurvivor } from './avatars';
+import { setSeed, getSeed, randomSeed, srand } from './rng';
 import * as sfx from './sfx';
 import * as hud from './hud';
 
@@ -90,6 +91,11 @@ async function start() {
   if (params.has('fps')) { targetFps = Math.max(30, Number(params.get('fps')) || 120); targetFrameMs = 1000 / targetFps; }
   if (params.has('quality')) pinnedTier = Math.max(-1, Math.min(MAX_TIER, Number(params.get('quality')) | 0));
   if (noBloom) bloomAllowed = false;
+
+  // seed the gameplay sim: ?seed=N replays the byte-identical run (challenge links,
+  // daily seed); otherwise a fresh random seed each load. Cosmetic rng stays unseeded.
+  const runSeed = params.has('seed') ? (Number(params.get('seed')) >>> 0) : randomSeed();
+  setSeed(runSeed);
 
   let renderer = await makeRenderer(forceGL);
   const app = document.getElementById('app')!;
@@ -357,7 +363,7 @@ async function start() {
 
   function spawnBoss(): void {
     bossesSpawned++;
-    const a = Math.random() * Math.PI * 2;
+    const a = srand() * Math.PI * 2;
     const rad = 50;
     swarm.spawn(BOSS_TYPE, player.position.x + Math.cos(a) * rad, player.position.z + Math.sin(a) * rad, bossHp(bossesSpawned));
     activeBosses++;
@@ -380,8 +386,8 @@ async function start() {
     spawnAcc += dt * spawnRate(t);
     while (spawnAcc >= 1) {
       spawnAcc -= 1;
-      const a = Math.random() * Math.PI * 2;
-      const rad = 52 + Math.random() * 18;
+      const a = srand() * Math.PI * 2;
+      const rad = 52 + srand() * 18;
       swarm.spawn(rollEnemyType(t), player.position.x + Math.cos(a) * rad, player.position.z + Math.sin(a) * rad);
     }
 
@@ -391,7 +397,7 @@ async function start() {
       const n = hordeSize(t);
       for (let i = 0; i < n; i++) {
         const a = (i / n) * Math.PI * 2;
-        const rad = 58 + Math.random() * 8;
+        const rad = 58 + srand() * 8;
         swarm.spawn(rollEnemyType(t + 30), player.position.x + Math.cos(a) * rad, player.position.z + Math.sin(a) * rad);
       }
     }
@@ -584,6 +590,8 @@ async function start() {
     missiles, fireMissile, fireNuke, doDash,
     dashReady: () => dashCd <= 0,
     iframes: () => iframes,
+    seed: () => getSeed(),
+    setSeed,
     audio: () => ({ ready: sfx.audioReady(), muted: sfx.isMuted() }),
     // test hook: feed a synthetic frame time to the governor and apply any tier change
     feedFrame: (frameMs: number) => {
@@ -688,7 +696,7 @@ async function start() {
         activeBosses--;
         // bosses pay out a cluster of gems and a big explosion
         for (let g = 0; g < 6; g++) {
-          gems.spawn(x + (Math.random() - 0.5) * 3, z + (Math.random() - 0.5) * 3, Math.ceil(xp / 6));
+          gems.spawn(x + (srand() - 0.5) * 3, z + (srand() - 0.5) * 3, Math.ceil(xp / 6));
         }
         particles.burst(x, t.radius, z, t.color, 90, 18);
         addShake(1.4);

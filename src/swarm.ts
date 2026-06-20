@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import type { SpatialGrid } from './spatial';
+import { srand } from './rng';
 
 /**
  * Procedurally build a low-poly shambling humanoid from merged boxes — a clear
@@ -150,7 +151,7 @@ export class Swarm {
     this.posX[i] = x;
     this.posZ[i] = z;
     this.hp[i] = this.maxHp[i] = hpOverride ?? t.hp;
-    this.speed[i] = t.speed * (0.9 + Math.random() * 0.2);
+    this.speed[i] = t.speed * (0.9 + srand() * 0.2); // gameplay (affects collisions) -> seeded
     this.radius[i] = t.radius;
     this.dps[i] = t.dps;
     this.xpv[i] = t.xp;

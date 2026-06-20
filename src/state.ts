@@ -1,3 +1,5 @@
+import { srand } from './rng';
+
 export interface GameState {
   hp: number;
   maxHp: number;
@@ -132,7 +134,7 @@ export const UPGRADES: Upgrade[] = [
 export function rollUpgrades(n = 3): Upgrade[] {
   const pool = UPGRADES.filter(u => u.count < u.max);
   for (let i = pool.length - 1; i > 0; i--) {
-    const j = (Math.random() * (i + 1)) | 0;
+    const j = (srand() * (i + 1)) | 0;
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
   return pool.slice(0, Math.min(n, pool.length));

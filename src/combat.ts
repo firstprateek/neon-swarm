@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import type { SpatialGrid } from './spatial';
 import { HIT_FLASH, type Swarm } from './swarm';
+import { srand } from './rng';
 
 let nextBulletId = 1;
 
@@ -180,7 +181,8 @@ export class Gems {
   spawn(x: number, z: number, value: number): void {
     if (this.count >= this.max) {
       // pool exhausted: fold the XP into an existing gem so nothing is lost
-      this.val[(Math.random() * this.count) | 0] += value;
+      // (gameplay — affects XP distribution, so seeded)
+      this.val[(srand() * this.count) | 0] += value;
       return;
     }
     const i = this.count++;

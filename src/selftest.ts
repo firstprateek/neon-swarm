@@ -9,6 +9,7 @@ import { Swarm, ENEMY_TYPES, BOSS_TYPE, HIT_FLASH } from './swarm';
 import { Bullets, Gems, Particles, Missiles } from './combat';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize } from './director';
+import { setSeed, srand, getSeed, clearSeed } from './rng';
 import { createQuality, governQuality, MAX_TIER } from './perf';
 import * as sfx from './sfx';
 import { defaultSettings, mergeSettings, qualityTier } from './settings';
@@ -306,6 +307,37 @@ function run(): void {
     const emptyG = new SpatialGrid(2.5, 8, 1);
     for (let t = 0; t < 30; t++) tes.update(1 / 60, 0, 0, emptySw, emptyG, particles); // no foes -> won't refire, segments age out
     check('tesla: bolt segments fade out', tes.mesh.count === 0 && tes.mesh.visible === false, String(tes.mesh.count));
+  }
+
+  // ---------- Determinism (seeded RNG) ----------
+  {
+    setSeed(12345);
+    const a: number[] = []; for (let i = 0; i < 16; i++) a.push(srand());
+    check('rng: values in [0,1)', a.every(v => v >= 0 && v < 1));
+    setSeed(12345);
+    const b: number[] = []; for (let i = 0; i < 16; i++) b.push(srand());
+    check('rng: same seed -> identical sequence', JSON.stringify(a) === JSON.stringify(b));
+    setSeed(99);
+    const c: number[] = []; for (let i = 0; i < 16; i++) c.push(srand());
+    check('rng: different seed -> different sequence', JSON.stringify(a) !== JSON.stringify(c));
+    check('rng: getSeed reports the active seed', getSeed() === 99);
+
+    // gameplay rolls reproduce exactly under the same seed
+    setSeed(777); const t1: number[] = []; for (let i = 0; i < 40; i++) t1.push(rollEnemyType(300));
+    setSeed(777); const t2: number[] = []; for (let i = 0; i < 40; i++) t2.push(rollEnemyType(300));
+    check('rng: rollEnemyType deterministic under seed', JSON.stringify(t1) === JSON.stringify(t2));
+    setSeed(42); const u1 = rollUpgrades(3).map(u => u.name);
+    setSeed(42); const u2 = rollUpgrades(3).map(u => u.name);
+    check('rng: rollUpgrades deterministic under seed', JSON.stringify(u1) === JSON.stringify(u2) && u1.length === 3);
+
+    // swarm spawn speeds (gameplay) reproduce; cosmetic bob/colour do not have to
+    const scene = new THREE.Scene();
+    setSeed(555); const sw1 = new Swarm(8, scene); for (let i = 0; i < 6; i++) sw1.spawn(0, i, 0);
+    const sp1 = Array.from(sw1.speed.slice(0, 6));
+    setSeed(555); const sw2 = new Swarm(8, scene); for (let i = 0; i < 6; i++) sw2.spawn(0, i, 0);
+    const sp2 = Array.from(sw2.speed.slice(0, 6));
+    check('rng: swarm spawn speeds deterministic under seed', JSON.stringify(sp1) === JSON.stringify(sp2));
+    clearSeed(); // back to Math.random for the rest of the suite
   }
 
   // ---------- Director / difficulty ----------

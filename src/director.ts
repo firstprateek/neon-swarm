@@ -1,4 +1,5 @@
 import { ENEMY_TYPES, BOSS_TYPE } from './swarm';
+import { srand } from './rng';
 
 /** seconds between boss spawns; first boss at BOSS_INTERVAL */
 export const BOSS_INTERVAL = 70;
@@ -16,7 +17,7 @@ export function spawnRate(t: number): number {
  * Never returns the boss (bosses come only from the boss timer). `r` is the
  * roll, injectable for deterministic tests.
  */
-export function rollEnemyType(t: number, r: number = Math.random()): number {
+export function rollEnemyType(t: number, r: number = srand()): number {
   if (t > 240 && r < 0.1) return 3;  // elite
   if (t > 100 && r < 0.22) return 2; // tank
   if (t > 35 && r < 0.42) return 1;  // runner
