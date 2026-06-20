@@ -244,6 +244,9 @@ function run(): void {
     ms.fire(0, 0, 1, 0, 55, 6.5); // launch toward the cluster
     check('missiles: fire adds one and shows the mesh', ms.count === 1 && ms.mesh.visible);
     const g = new SpatialGrid(2.5, 32, 8);
+    // a few frames of flight: the rocket should lay an exhaust trail (particles) before impact
+    for (let t = 0; t < 4; t++) { g.build(sw.posX, sw.posZ, sw.count, 0, 0); ms.update(1 / 60, sw, g, part, () => {}); }
+    check('missiles: lay an exhaust trail in flight', part.count > 0 && ms.count === 1, `trail=${part.count} missile=${ms.count}`);
     let boomed = false;
     for (let t = 0; t < 80 && ms.count > 0; t++) {
       g.build(sw.posX, sw.posZ, sw.count, 0, 0);

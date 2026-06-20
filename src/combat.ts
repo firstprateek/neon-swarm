@@ -250,6 +250,8 @@ export class Gems {
  * enemy via a cheap grid-local search, steers toward it, and detonates for area
  * damage on proximity or timeout. Pooled + instanced like everything else.
  */
+const MISSILE_TRAIL = new THREE.Color(0xff7a1e); // hot exhaust
+
 export class Missiles {
   readonly max: number;
   count = 0;
@@ -260,6 +262,7 @@ export class Missiles {
   readonly life: Float32Array;
   readonly dmg: Float32Array;
   readonly aoe: Float32Array;
+  readonly trailAcc: Float32Array; // distance since the last exhaust puff (fps-independent trail)
   readonly mesh: THREE.InstancedMesh;
   private readonly speed = 26;
 
@@ -272,8 +275,11 @@ export class Missiles {
     this.life = new Float32Array(max);
     this.dmg = new Float32Array(max);
     this.aoe = new Float32Array(max);
-    const geo = new THREE.ConeGeometry(0.28, 0.9, 6);
-    const mat = new THREE.MeshBasicMaterial({ color: 0xffc24a });
+    this.trailAcc = new Float32Array(max);
+    // a chunky, bright rocket so it reads clearly streaking across the field
+    const geo = new THREE.ConeGeometry(0.45, 1.6, 8);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffd24a });
+    mat.toneMapped = false; // stay vivid so the bloom pass picks it up
     this.mesh = new THREE.InstancedMesh(geo, mat, max);
     this.mesh.frustumCulled = false;
     this.mesh.visible = false;
@@ -289,6 +295,7 @@ export class Missiles {
     this.px[i] = x; this.pz[i] = z;
     this.vx[i] = dirX * this.speed; this.vz[i] = dirZ * this.speed;
     this.life[i] = 2.4; this.dmg[i] = dmg; this.aoe[i] = aoe;
+    this.trailAcc[i] = 0;
     this.syncDraw();
   }
 
@@ -298,6 +305,7 @@ export class Missiles {
       this.px[i] = this.px[last]; this.pz[i] = this.pz[last];
       this.vx[i] = this.vx[last]; this.vz[i] = this.vz[last];
       this.life[i] = this.life[last]; this.dmg[i] = this.dmg[last]; this.aoe[i] = this.aoe[last];
+      this.trailAcc[i] = this.trailAcc[last];
       // move the matrix too, or the swapped-in missile renders a stale ghost for a frame
       const m = this.mesh.instanceMatrix.array as Float32Array;
       m.copyWithin(i * 16, last * 16, last * 16 + 16);
@@ -377,6 +385,12 @@ export class Missiles {
       // local Y -> velocity dir, local Z -> world up, local X -> their cross
       const vlen = Math.sqrt(vx[i] * vx[i] + vz[i] * vz[i]) + 1e-6;
       const ux = vx[i] / vlen, uz = vz[i] / vlen;
+      // fiery exhaust trail: a puff every ~0.6 units travelled, dropped at the tail
+      this.trailAcc[i] += vlen * dt;
+      if (this.trailAcc[i] >= 0.6) {
+        this.trailAcc[i] -= 0.6;
+        particles.trail(nx - ux * 0.8, 0.7, nz - uz * 0.8, MISSILE_TRAIL, 2);
+      }
       const o = i * 16;
       m[o] = -uz; m[o + 1] = 0; m[o + 2] = ux; m[o + 3] = 0;     // col0 = X
       m[o + 4] = ux; m[o + 5] = 0; m[o + 6] = uz; m[o + 7] = 0;  // col1 = Y (tip)
@@ -456,6 +470,40 @@ export class Particles {
       col[i * 3 + 2] = color.b;
       // write the spawn matrix immediately so a burst is visible even on
       // frames where update() doesn't run (e.g. the death explosion)
+      const o = i * 16;
+      m.fill(0, o, o + 16);
+      m[o] = m[o + 5] = m[o + 10] = this.size[i];
+      m[o + 12] = x;
+      m[o + 13] = y;
+      m[o + 14] = z;
+      m[o + 15] = 1;
+    }
+    this.mesh.instanceColor!.addUpdateRange(0, this.count * 3);
+    this.mesh.instanceColor!.needsUpdate = true;
+    const im = this.mesh.instanceMatrix;
+    im.addUpdateRange(0, this.count * 16);
+    im.needsUpdate = true;
+    this.syncDraw();
+  }
+
+  /** a tight puff of exhaust at a point — used for missile trails (no big spread, slight rise) */
+  trail(x: number, y: number, z: number, color: THREE.Color, n: number): void {
+    const col = this.mesh.instanceColor!.array as Float32Array;
+    const m = this.mesh.instanceMatrix.array as Float32Array;
+    for (let s = 0; s < n; s++) {
+      if (this.count >= this.max) break;
+      const i = this.count++;
+      this.px[i] = x;
+      this.py[i] = y;
+      this.pz[i] = z;
+      this.vx[i] = (Math.random() - 0.5) * 2.2;
+      this.vy[i] = Math.random() * 1.4 + 0.2;
+      this.vz[i] = (Math.random() - 0.5) * 2.2;
+      this.maxLife[i] = this.life[i] = 0.26 + Math.random() * 0.28;
+      this.size[i] = 0.6 + Math.random() * 0.7;
+      col[i * 3] = color.r;
+      col[i * 3 + 1] = color.g;
+      col[i * 3 + 2] = color.b;
       const o = i * 16;
       m.fill(0, o, o + 16);
       m[o] = m[o + 5] = m[o + 10] = this.size[i];

@@ -514,9 +514,12 @@ async function start() {
     let dirX = Math.sin(facing), dirZ = Math.cos(facing);
     const t = swarm.nearest(px, pz);
     if (t >= 0) { const dx = swarm.posX[t] - px, dz = swarm.posZ[t] - pz; const d = Math.sqrt(dx * dx + dz * dz) + 1e-6; dirX = dx / d; dirZ = dz / d; }
-    missiles.fire(px, pz, dirX, dirZ, MISSILE_DMG, MISSILE_AOE);
+    // launch just ahead of the survivor so it doesn't pop out of their chest
+    missiles.fire(px + dirX * 0.9, pz + dirZ * 0.9, dirX, dirZ, MISSILE_DMG, MISSILE_AOE);
     state.missiles--;
-    addShake(0.2);
+    // muzzle flash so the launch reads as a real "fire"
+    particles.burst(px + dirX * 1.1, 0.7, pz + dirZ * 1.1, new THREE.Color(0xffe6b0), 22, 18);
+    addShake(0.35);
     sfx.sfxFire();
   }
 
