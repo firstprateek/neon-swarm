@@ -243,12 +243,12 @@ function archetypeParts(kind: Kind, w: number, h: number, d: number, cx: number,
   } else if (kind === Kind.Hospital) {
     add(new THREE.BoxGeometry(w, h, d).translate(cx, h / 2, cz));                           // main slab
     add(new THREE.BoxGeometry(w * 0.18, h * 0.7, d * 1.12).translate(cx - w * 0.46, h * 0.35, cz), 0.85); // side wing
-    add(new THREE.BoxGeometry(w * 0.4, h * 0.12, d * 0.4).translate(cx, h + h * 0.06, cz), 1.2);          // rooftop unit (bright)
-    add(new THREE.BoxGeometry(w * 0.06, h * 0.16, d * 0.32).translate(cx + w * 0.2, h + h * 0.1, cz), 1.5); // a pale roof marker
+    add(new THREE.BoxGeometry(w * 0.4, h * 0.12, d * 0.4).translate(cx, h + h * 0.06, cz), 1.08);         // rooftop unit
+    add(new THREE.BoxGeometry(w * 0.06, h * 0.16, d * 0.32).translate(cx + w * 0.2, h + h * 0.1, cz), 1.15); // a pale roof marker
   } else if (kind === Kind.Cinema) {
     add(new THREE.BoxGeometry(w, h, d).translate(cx, h / 2, cz));                           // hall
-    add(new THREE.BoxGeometry(w * 1.05, h * 0.16, d * 0.24).translate(cx, h * 0.34, cz + d * 0.5), 1.25);  // marquee canopy (front, lit)
-    add(new THREE.BoxGeometry(w * 0.14, h * 0.55, d * 0.1).translate(cx, h + h * 0.27, cz), 1.35);         // vertical sign blade
+    add(new THREE.BoxGeometry(w * 1.05, h * 0.16, d * 0.24).translate(cx, h * 0.34, cz + d * 0.5), 1.1);   // marquee canopy (front)
+    add(new THREE.BoxGeometry(w * 0.14, h * 0.55, d * 0.1).translate(cx, h + h * 0.27, cz), 1.15);         // vertical sign blade
   } else if (kind === Kind.Ruin) {
     const fragH = h * (0.45 + rng() * 0.45);
     add(new THREE.BoxGeometry(w * 0.92, fragH, d * 0.92).translate(cx, fragH / 2, cz));     // standing remnant
@@ -464,6 +464,48 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     }
   }
 
+  // (4) park terrain — lakes, mountains, woods. Park zone only, stream-only, ONE fixed
+  // roll-count per candidate (accept/reject never changes stream length). Sizes are capped
+  // UNDER the nearestFree escape radius (48 cells) so spawns can never strand inside.
+  const lakes: { x: number; z: number; r: number }[] = [];
+  const mountains: { x: number; z: number; r: number; h: number }[] = [];
+  const trees: { x: number; z: number; r: number; h: number }[] = [];
+  const parkLo = ZONE.R1_BASE - 20, parkSpan = (Bd - 34) - parkLo;
+  // lakes: ≤2, half-extent 20..32 (<48) → square ponds (SOLID, render-routed by kind)
+  let lakeN = 0;
+  for (let i = 0; i < 8; i++) {
+    const ang = rng() * TWO_PI, rad = parkLo + rng() * parkSpan, r = 20 + rng() * 12;
+    const x = Math.cos(ang) * rad, z = Math.sin(ang) * rad;
+    if (lakeN < 2 && zone(x, z) === Zone.Park && !onRoad(x, z, bigRoads, r + 8)) {
+      push(x - r, z - r, x + r, z + r, ObsFlag.SOLID, 0.5, Kind.Water);
+      lakes.push({ x, z, r }); lakeN++;
+    }
+  }
+  // mountains: ≤4, half-extent 24..38 (<48), tall enough (40..70) to resolve out of the fog
+  let mtnN = 0;
+  for (let i = 0; i < 10; i++) {
+    const ang = rng() * TWO_PI, rad = parkLo + rng() * parkSpan, r = 24 + rng() * 14, mh = 40 + rng() * 30;
+    const x = Math.cos(ang) * rad, z = Math.sin(ang) * rad;
+    if (mtnN < 4 && zone(x, z) === Zone.Park && !onRoad(x, z, bigRoads, r + 10)) {
+      push(x - r, z - r, x + r, z + r, ObsFlag.SOLID, mh, Kind.Mountain);
+      mountains.push({ x, z, r, h: mh }); mtnN++;
+    }
+  }
+  // woods: groves of tiny SOLID trunks (horde flows AROUND, never sealed) + walk-under canopies
+  for (let g = 0; g < 6; g++) {
+    const gang = rng() * TWO_PI, grad = parkLo + rng() * parkSpan;
+    const gx = Math.cos(gang) * grad, gz = Math.sin(gang) * grad;
+    const groveOk = zone(gx, gz) === Zone.Park;
+    for (let k = 0; k < 12; k++) {
+      const ox = (rng() - 0.5) * 50, oz = (rng() - 0.5) * 50, tr = 1.2 + rng() * 0.8, th = 5 + rng() * 5;
+      const tx = gx + ox, tz = gz + oz;
+      if (groveOk && zone(tx, tz) === Zone.Park && !onRoad(tx, tz, bigRoads, 3)) {
+        push(tx - tr / 2, tz - tr / 2, tx + tr / 2, tz + tr / 2, ObsFlag.SOLID, th, Kind.TreeTrunk);
+        trees.push({ x: tx, z: tz, r: tr, h: th });
+      }
+    }
+  }
+
   // boundary ring — thin tall barricade walls that resolve out of the fog as the city edge
   const t = 4, wallH = 20;
   push(-Bd - t, -Bd - t, Bd + t, -Bd, ObsFlag.SOLID, wallH, Kind.Boundary); // south
@@ -499,13 +541,14 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
   if (!skipMeshes && count > 0) {
     const parts: THREE.BufferGeometry[] = [];
     for (let i = 0; i < count; i++) {
+      if (obstacles.kind[i] >= Kind.Mountain) continue; // terrain/structures render in their own layers
       const w = obstacles.maxX[i] - obstacles.minX[i];
       const d = obstacles.maxZ[i] - obstacles.minZ[i];
       const h = obstacles.height[i];
       const cx = (obstacles.minX[i] + obstacles.maxX[i]) / 2;
       const cz = (obstacles.minZ[i] + obstacles.maxZ[i]) / 2;
       const tint = KIND_TINT[obstacles.kind[i]] ?? KIND_TINT[0];
-      const j = 0.85 + rng() * 0.3; // grime jitter from the city stream
+      const j = 0.82 + rng() * 0.22; // grime jitter from the city stream (capped so faces never bloom white)
       const t = [tint[0] * j, tint[1] * j, tint[2] * j];
       const sub = obstacles.hollow[i]
         ? hollowParts(h, w, d, cx, cz, t, obstacles.doorSide[i])      // roofless wall ring
@@ -519,6 +562,64 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     const mesh = new THREE.Mesh(merged, mat);
     mesh.frustumCulled = false;
     meshes.push(mesh);
+  }
+
+  // park terrain — mountains (stepped prisms) + tree trunks merged into ONE Lambert mesh
+  if (!skipMeshes && (mountains.length > 0 || trees.length > 0)) {
+    const parts: THREE.BufferGeometry[] = [];
+    const mt = KIND_TINT[Kind.Mountain], tt = KIND_TINT[Kind.TreeTrunk];
+    for (const m of mountains) {
+      const L = 4;
+      for (let l = 0; l < L; l++) {
+        const f = 1 - l / (L + 0.4);              // shrinking footprint up the peak
+        const lw = m.r * 2 * f, lh = m.h / L, ly = l * lh;
+        const sh = 0.7 + l * 0.12;                // higher layers a touch lighter (snowless crag)
+        parts.push(paint(new THREE.BoxGeometry(lw, lh * 1.25, lw).rotateY(l * 0.5).translate(m.x, ly + lh * 0.6, m.z), mt[0] * sh, mt[1] * sh, mt[2] * sh));
+      }
+    }
+    for (const tr of trees) {
+      parts.push(paint(new THREE.BoxGeometry(tr.r, tr.h, tr.r).translate(tr.x, tr.h / 2, tr.z), tt[0], tt[1], tt[2]));
+    }
+    if (parts.length > 0) {
+      const merged = BufferGeometryUtils.mergeGeometries(parts, false);
+      parts.forEach(p => p.dispose());
+      const tmat = new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0x0c0e0b, flatShading: true });
+      const tmesh = new THREE.Mesh(merged, tmat);
+      tmesh.frustumCulled = false;
+      meshes.push(tmesh);
+    }
+  }
+
+  // tree canopies — merged cones you walk UNDER (render-only, dropped on low tier)
+  if (!skipMeshes && trees.length > 0) {
+    const parts: THREE.BufferGeometry[] = [];
+    for (const tr of trees) {
+      const cr = tr.r * 3.4, ch = tr.h * 1.3, cy = tr.h * 0.78;
+      parts.push(paint(new THREE.ConeGeometry(cr, ch, 6).translate(tr.x, cy + ch / 2, tr.z), 0.10, 0.21, 0.10));
+    }
+    const merged = BufferGeometryUtils.mergeGeometries(parts, false);
+    parts.forEach(p => p.dispose());
+    const cmat = new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0x070b07, flatShading: true });
+    const canopies = new THREE.Mesh(merged, cmat);
+    canopies.frustumCulled = false;
+    meshes.push(canopies); cosmetic.push(canopies);
+  }
+
+  // lakes — transparent dark quads (the proven plane-instance path; NOT boxes)
+  if (!skipMeshes && lakes.length > 0) {
+    const wq = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+    const wmat = new THREE.MeshBasicMaterial({ color: 0x0a2632, transparent: true, opacity: 0.84, depthWrite: false });
+    wmat.polygonOffset = true; wmat.polygonOffsetFactor = -2; wmat.polygonOffsetUnits = -3;
+    const water = new THREE.InstancedMesh(wq, wmat, lakes.length);
+    water.frustumCulled = false;
+    water.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    const m = new THREE.Matrix4();
+    for (let i = 0; i < lakes.length; i++) {
+      m.makeScale(lakes[i].r * 2, 1, lakes[i].r * 2); m.setPosition(lakes[i].x, 0.06, lakes[i].z);
+      water.setMatrixAt(i, m);
+    }
+    water.instanceMatrix.needsUpdate = true;
+    meshes.push(water);
   }
 
   // roads: oriented dark quads — downtown grid disc + winding suburb arterials + radial spokes

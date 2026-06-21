@@ -225,6 +225,26 @@ function run(): void {
     check('city: all three zones present (downtown/suburb/park)', seen[0] === 1 && seen[1] === 1 && seen[2] === 1, `${seen.join(',')}`);
     check('city: origin is downtown (spawn-safe)', zc1.zoneAt(0, 0) === 0);
     check('city: far rim is park', zc1.zoneAt(540, 0) === 2 && zc1.zoneAt(0, 540) === 2);
+
+    // ---- park terrain (lakes / mountains / woods) ----
+    const tc = generateCity(777, false, true);
+    const to = tc.obstacles;
+    let water = 0, mtn = 0, trunk = 0, maxWaterR = 0, maxMtnR = 0, terrainInPark = true;
+    for (let i = 0; i < to.count; i++) {
+      const k = to.kind[i];
+      if (k !== 8 && k !== 9 && k !== 10) continue;
+      const rr = Math.max(to.maxX[i] - to.minX[i], to.maxZ[i] - to.minZ[i]) / 2;
+      const cx = (to.minX[i] + to.maxX[i]) / 2, cz = (to.minZ[i] + to.maxZ[i]) / 2;
+      if (tc.zoneAt(cx, cz) !== 2) terrainInPark = false;
+      if (k === 10) { water++; if (rr > maxWaterR) maxWaterR = rr; }
+      else if (k === 8) { mtn++; if (rr > maxMtnR) maxMtnR = rr; }
+      else trunk++;
+    }
+    check('city: park has terrain (lakes/mountains/woods)', water + mtn + trunk > 0, `w${water} m${mtn} t${trunk}`);
+    check('city: all terrain sits in the park zone', terrainInPark);
+    check('city: lakes capped under nearestFree escape (<48)', maxWaterR < 48, `${maxWaterR.toFixed(0)}`);
+    check('city: mountains capped under nearestFree escape (<48)', maxMtnR < 48, `${maxMtnR.toFixed(0)}`);
+    check('city: terrain present still leaves world navigable', _reachable(tc.blockGrid) > 100000, `${_reachable(tc.blockGrid)}`);
   }
 
   // ---------- Bullets ----------
