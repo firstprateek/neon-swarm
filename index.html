@@ -214,9 +214,6 @@
     .tc-btn:nth-child(2) { margin-left: 10px; }
     .tc-btn:nth-child(3) { margin-left: 20px; }
     .tc-btn#tc-nuke { border-color: var(--hz-amber); color: var(--hz-amber); }
-    /* the radioactive ability wears a hazard strip across its top */
-    .tc-btn#tc-nuke::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 5px;
-      background-image: repeating-linear-gradient(-45deg, var(--hz-stripe-a) 0 8px, var(--hz-stripe-b) 8px 16px); opacity: 0.85; }
     .tc-btn.down { transform: scale(0.92); box-shadow: 0 0 22px currentColor; }
     /* depleted: red swap + a dim (not so dim it's unreadable — 0.32 fell to ~1.6:1) */
     .tc-btn.tc-empty { opacity: 0.7; border-color: var(--hz-danger-soft); color: var(--hz-danger-soft); }

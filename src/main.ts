@@ -4,7 +4,7 @@ import { pass, uniform, mix, vec3, screenUV, luminance, clamp, oneMinus,
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { createState, grantXp, rollUpgrades, registerKill, tickCombo, UPGRADES,
   MISSILE_MAX, NUKE_MAX, MISSILE_REFILL, MISSILE_DMG, MISSILE_AOE, NUKE_DMG } from './state';
-import { getMove, getAim, setTouchMove, clearTouchMove, setMouseAim, setKeyMap, heldKeys } from './input';
+import { getMove, getAim, isAimActive, setTouchMove, clearTouchMove, setMouseAim, setKeyMap, heldKeys } from './input';
 import { resolveAction, isDown, defaultKeys, isBindable, keyLabel, KEY_ACTIONS, ACTION_LABELS, type KeyAction } from './keybind';
 import { type Difficulty, DIFFICULTIES, flagsToPreset, coerceDifficulty } from './modes';
 import { createTouch } from './touch';
@@ -17,7 +17,7 @@ import { AmbientMotes } from './ambient';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize, BOSS_INTERVAL } from './director';
 import { createQuality, governQuality, QUALITY_TIERS, MAX_TIER } from './perf';
-import { loadSettings, saveSettings, qualityTier, applyPreset, clampZoom, ZOOM_MAX, type Settings, type QualityMode } from './settings';
+import { loadSettings, saveSettings, qualityTier, applyPreset, clampZoom, ZOOM_MAX, ZOOM_DEFAULT, type Settings, type QualityMode } from './settings';
 import { AVATARS, makeSurvivor } from './avatars';
 import { setSeed, getSeed, randomSeed, srand } from './rng';
 import { TELEMETRY_ENDPOINT } from './config';
@@ -290,6 +290,9 @@ async function start() {
   // touch device? enables on-screen controls, a tighter DPR ceiling, and visualViewport sizing
   const isTouch = matchMedia('(pointer: coarse)').matches || params.has('touch');
   if (isTouch) document.body.classList.add('touch'); // hides the keyboard-hint ability HUD
+  // small screens want the widest field of view — default touch devices to max zoom-out
+  // (only when the player hasn't picked a zoom of their own; their choice still persists)
+  if (isTouch && settings.zoom === ZOOM_DEFAULT) settings.zoom = ZOOM_MAX;
   // a 3x-DPR phone renders far too many pixels before the governor reacts — cap it
   const dprCap = (cap: number) => (isTouch ? Math.min(cap, 1.5) : cap);
   const viewportWH = (): [number, number] => {
@@ -722,6 +725,7 @@ async function start() {
   let fireAcc = 0;
   let fireHeld = false; // desktop FIRE key/mouse held (manual auto-fire-off mode)
   const setFireHeld = (v: boolean): void => { fireHeld = v; };
+  let engaged = false;  // suppress auto-fire until the player first moves/aims (no stray spawn bullet)
   let facing = 0;
   let muzzle = 0; // muzzle-flash glow pulse, decays each frame
   const baseGlow = glow.intensity;
@@ -731,12 +735,11 @@ async function start() {
     let dirX = Math.sin(facing), dirZ = Math.cos(facing); // default: where we FACE
     if (settings.gunLock) {                                // ON => auto-aim nearest
       const target = swarm.nearest(px, pz);
-      if (target >= 0) {
-        const dx = swarm.posX[target] - px, dz = swarm.posZ[target] - pz;
-        const d = Math.sqrt(dx * dx + dz * dz) + 1e-6;
-        dirX = dx / d;
-        dirZ = dz / d;
-      }
+      if (target < 0) return; // nothing to lock onto → don't fire into empty space (no stray bullet)
+      const dx = swarm.posX[target] - px, dz = swarm.posZ[target] - pz;
+      const d = Math.sqrt(dx * dx + dz * dz) + 1e-6;
+      dirX = dx / d;
+      dirZ = dz / d;
     } // OFF => keep facing dir, no nearest scan
     const n = state.projectiles;
     const spread = 0.14;
@@ -841,12 +844,15 @@ async function start() {
     });
     const canvas = renderer.domElement;
     canvas.addEventListener('contextmenu', e => e.preventDefault());
+    canvas.addEventListener('mousedown', e => { if (e.button === 1) e.preventDefault(); }); // no middle-click autoscroll
     canvas.addEventListener('pointerdown', e => {
       if (!canAct()) return;
-      if (e.button === 0) fireMissile();                            // LMB = missile
-      else if (e.button === 2) { e.preventDefault(); fireNuke(); }  // RMB = nuke
-      // gun fires automatically (Medium) or via the FIRE key (Hard) — see wantFire
+      if (e.button === 0) setFireHeld(true);                          // LMB = fire the gun (hold)
+      else if (e.button === 2) { e.preventDefault(); fireMissile(); } // RMB = missile
+      else if (e.button === 1) { e.preventDefault(); fireNuke(); }    // MMB = nuke
     });
+    window.addEventListener('pointerup', e => { if (e.button === 0) setFireHeld(false); });
+    window.addEventListener('blur', () => setFireHeld(false));
   }
 
   // wall-clock ability cooldown + missile refill (unaffected by hit-stop slow-mo)
@@ -996,6 +1002,7 @@ async function start() {
     if (iframes > 0) iframes -= dt;
 
     const mv = getMove();
+    if (!engaged && (mv.x !== 0 || mv.z !== 0 || isAimActive())) engaged = true; // first move/aim "starts" the run
     player.position.x += mv.x * state.moveSpeed * dt;
     player.position.z += mv.z * state.moveSpeed * dt;
     // dash burst (fast, brief)
@@ -1058,11 +1065,12 @@ async function start() {
 
     director(dt);
 
-    // gun fires automatically, OR only while a FIRE control is held (auto-fire OFF)
-    const wantFire = settings.autoFire
-      || isDown(settings.keybinds, heldKeys(), 'fire')   // desktop polled FIRE key
-      || (touch?.isFiring() ?? false)                    // mobile FIRE button
-      || fireHeld;                                       // mouse/explicit hold
+    // explicit fire (held key / mobile FIRE / aim stick / LMB) always works; auto-fire
+    // waits until the player has engaged so it never looses a stray bullet at spawn
+    const explicitFire = isDown(settings.keybinds, heldKeys(), 'fire')
+      || (touch?.isFiring() ?? false)
+      || fireHeld;
+    const wantFire = explicitFire || (settings.autoFire && engaged);
     if (wantFire) {
       fireAcc += dt * state.fireRate;
       if (fireAcc > 4) fireAcc = 4;
