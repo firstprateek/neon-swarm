@@ -6,6 +6,28 @@ function el<T extends HTMLElement = HTMLElement>(id: string): T {
   return document.getElementById(id) as T;
 }
 
+// reduced-motion: floaters + the fullscreen hit-flash are JS-driven (inline
+// opacity/transform), so CSS @media can't reach them — gate here instead.
+const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** Animate an element's number from 0 up to `target` (the game-over score reveal).
+ *  Honors reduced-motion by snapping to the final value. */
+function countUp(node: HTMLElement, target: number, ms = 900): void {
+  // set the final value synchronously first: correct for tests, screen readers,
+  // and any no-rAF context — the animation below overwrites it before first paint
+  node.textContent = target.toLocaleString();
+  if (REDUCED_MOTION || target <= 0) return;
+  const start = performance.now();
+  const tick = (now: number): void => {
+    const t = Math.min(1, (now - start) / ms);
+    const eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
+    node.textContent = Math.round(target * eased).toLocaleString();
+    if (t < 1) requestAnimationFrame(tick);
+    else node.textContent = target.toLocaleString();
+  };
+  requestAnimationFrame(tick);
+}
+
 const hpFill = el('hp-fill');
 const hpLabel = el('hp-label');
 const xpFill = el('xp-fill');
@@ -81,9 +103,11 @@ function updateFloaters(dt: number): void {
     if (f.life <= 0) continue;
     f.life -= dt;
     if (f.life <= 0) { f.el.style.display = 'none'; continue; }
-    f.y -= 46 * dt; // drift up (px/s)
     const a = f.life / f.maxLife;
     f.el.style.opacity = a.toFixed(2);
+    // reduced-motion: fade in place — no upward drift, no scale pop
+    if (REDUCED_MOTION) { f.el.style.transform = `translate(${f.x}px, ${f.y}px)`; continue; }
+    f.y -= 46 * dt; // drift up (px/s)
     f.el.style.transform = `translate(${f.x}px, ${f.y}px) scale(${1 + (1 - a) * 0.35})`;
   }
 }
@@ -191,6 +215,9 @@ export function tick(dt: number): void {
 
 /** fullscreen flash (nuke, big events) that fades out */
 export function flash(color = '#ffffff', peak = 0.6): void {
+  // reduced-motion: keep the "you got hit / nuke" signal but cap the strobe
+  // intensity (full-white flashes are a seizure risk) — soften, don't remove
+  if (REDUCED_MOTION) peak = Math.min(peak, 0.18);
   flashEl.style.background = color;
   flashOpacity = peak;
   flashEl.style.opacity = peak.toFixed(3);
@@ -440,7 +467,7 @@ export function showGameOver(state: GameState, info: RunInfo): void {
   const daily = info.daily;
 
   el('brag-label').textContent = daily ? `☀ DAILY #${daily.num} · ${daily.mode.toUpperCase()}` : 'NEON SWARM';
-  el('brag-score').textContent = state.score.toLocaleString();
+  countUp(el('brag-score'), state.score); // count-up reveal (snaps under reduced-motion)
   el('brag-sub').textContent = `${info.survivor} · PEAK ×${peakMult}`;
 
   const dailyEl = el('brag-daily');
