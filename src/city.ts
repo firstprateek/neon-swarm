@@ -66,7 +66,6 @@ export interface City {
   climb: { x: number; z: number; r: number; h: number }; // the climbable mountain (for the swarm)
   setVisualTier(tier: number): void;
   updateTunnels(px: number, pz: number, dt: number): void;
-  faceSigns(cx: number, cy: number, cz: number): void; // turn the gateway signs to face the camera
 }
 
 const WALL_T = 2;   // hollow-building wall thickness (world units)
@@ -538,9 +537,10 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
       else if (kind === Kind.House) height = 5 + rng() * 4;
       else if (kind === Kind.Ruin) height = 4 + rng() * 7;
       else height = 1.5 + rng() * 2.5;                            // rubble pile
-      // ~50% of big-enough INTACT buildings are HOLLOW (enterable, with a supply cache inside)
-      const hollowOk = kind === Kind.House || kind === Kind.Hospital || kind === Kind.Cinema || kind === Kind.Mall;
-      const hollow = (hollowOk && fw >= HOLLOW_MIN && fd >= HOLLOW_MIN && rng() < 0.5) ? 1 : 0;
+      // ~half the standing buildings are HOLLOW (enterable, with a supply cache inside) — every
+      // kind EXCEPT the tower skyline and the tiny rubble piles; ~60% of those big enough.
+      const hollowOk = kind === Kind.House || kind === Kind.Hospital || kind === Kind.Cinema || kind === Kind.Mall || kind === Kind.Ruin;
+      const hollow = (hollowOk && fw >= HOLLOW_MIN && fd >= HOLLOW_MIN && rng() < 0.6) ? 1 : 0;
       let doorSide = 0;
       if (hollow) {
         doorSide = (rng() * 4) | 0;
@@ -669,7 +669,6 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
   // ---- meshes ----
   const meshes: THREE.Object3D[] = [];
   const cosmetic: THREE.Object3D[] = []; // toggled by visual tier
-  const signMeshes: THREE.Mesh[] = []; // gateway zone signs — turned to face the camera each frame
   // per-frame fade state for the hollow-building roofs (built below if there are any)
   let roofRT: {
     fade: Float32Array; attr: THREE.BufferAttribute; alpha: Float32Array;
@@ -924,8 +923,11 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
       const mat = new THREE.MeshBasicMaterial({ map: makeSignTexture(sg.text, sg.accent), toneMapped: false, side: THREE.DoubleSide });
       const sign = new THREE.Mesh(new THREE.PlaneGeometry(sg.w, sg.h), mat);
       sign.position.set(sg.x, sg.y, sg.z);
+      // FIXED orientation (never tracks the player): tilt so the face is head-on to the camera's
+      // constant 60°-down view direction → readable when ahead, like a real billboard.
+      sign.rotation.x = -1.05;
       sign.frustumCulled = false;
-      meshes.push(sign); signMeshes.push(sign); // oriented to face the camera in faceSigns()
+      meshes.push(sign);
     }
     const merged = BufferGeometryUtils.mergeGeometries(postParts, false);
     postParts.forEach(p => p.dispose());
@@ -972,9 +974,6 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     warp,
     groundHeight(x: number, z: number): number { return climbHeight(x, z); },
     climb: { x: CLIMB.x, z: CLIMB.z, r: CLIMB.r, h: CLIMB.h },
-    faceSigns(cx: number, cy: number, cz: number): void {
-      for (let i = 0; i < signMeshes.length; i++) signMeshes[i].lookAt(cx, cy, cz); // always readable, any approach
-    },
     setVisualTier(tier: number): void {
       // collidable rects are identical across tiers; only cosmetics toggle
       const show = tier <= 1;
