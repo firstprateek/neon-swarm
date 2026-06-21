@@ -45,7 +45,7 @@ Pick how much the game helps you aim and fire — set a preset (or flip the togg
 | **Medium** | on | aims at your mouse (the body faces the cursor) | fires toward the cursor |
 | **Hard** | off (hold Fire / left-click) | aims at your mouse | fires toward the cursor |
 
-In the **manual** modes (Medium / Hard) aiming is decoupled from movement — you walk with `WASD` and aim independently with the mouse (true twin-stick), instead of only firing where you walk. On mobile this maps to the movement joystick plus a tap-aim/auto-aim assist.
+In the **manual** modes (Medium / Hard) aiming is decoupled from movement — you walk with `WASD` and aim independently with the mouse (true twin-stick), instead of only firing where you walk. A neon reticle replaces the cursor, **left-click** fires a missile and **right-click** the nuke. On mobile, manual mode shows a **second joystick**: move with the left thumb, aim with the right thumb (holding it also fires), with the ability buttons centered between them.
 
 In **Free Play** you can change controls anytime. In a **Daily Challenge** you choose the mode at the start and it's locked for that run — and **each mode has its own leaderboard** (an Easy score isn't compared against a Hard one).
 
