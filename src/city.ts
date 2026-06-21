@@ -32,6 +32,13 @@ export interface ObstacleSoA {
   flags: Uint8Array;   // ObsFlag bitset
   height: Float32Array;
   kind: Uint8Array;
+  hollow: Uint8Array;   // 1 = enterable (wall ring + a door, open interior)
+  doorSide: Uint8Array; // 0 S, 1 N, 2 W, 3 E — which wall has the doorway
+}
+
+/** drops generated inside hollow buildings (type: 0 health, 1 missiles, 2 nuke) */
+export interface DropList {
+  count: number; x: Float32Array; z: Float32Array; type: Uint8Array;
 }
 
 export interface BlockGrid {
@@ -43,11 +50,16 @@ export interface BlockGrid {
 export interface City {
   obstacles: ObstacleSoA;
   blockGrid: BlockGrid;
+  drops: DropList;
   meshes: THREE.Object3D[];
   seed: number;
   setVisualTier(tier: number): void;
   updateTunnels(px: number, pz: number, dt: number): void;
 }
+
+const WALL_T = 2;   // hollow-building wall thickness (world units)
+const DOOR_W = 5;   // doorway gap width
+const HOLLOW_MIN = 16; // a building must be this wide/deep to be made hollow
 
 // ---- generation tunables (counts are SEED-only — never tier/device derived) ----
 const CITY = {
@@ -127,19 +139,38 @@ export function resolveMove(g: BlockGrid, fromX: number, fromZ: number, toX: num
   return { x, z };
 }
 
+// fill (val=1) or clear (val=0) a world-space rect of cells
+function fillCells(g: BlockGrid, minX: number, minZ: number, maxX: number, maxZ: number, val: 0 | 1): void {
+  const { blocked, dim, invCell, half } = g;
+  const max = dim - 1, cl = (v: number) => (v < 0 ? 0 : v > max ? max : v);
+  const cx0 = cl(((minX + half) * invCell) | 0), cz0 = cl(((minZ + half) * invCell) | 0);
+  const cx1 = cl(((maxX + half) * invCell) | 0), cz1 = cl(((maxZ + half) * invCell) | 0);
+  for (let cz = cz0; cz <= cz1; cz++) blocked.fill(val, cz * dim + cx0, cz * dim + cx1 + 1);
+}
+
 // ---- bake SOLID rects into the bitmask (PASS_UNDER/TUNNEL skipped → walk-under) ----
 function bake(g: BlockGrid, s: ObstacleSoA): void {
   const { blocked, dim, invCell, half } = g;
   blocked.fill(0);
-  const max = dim - 1;
-  const cl = (v: number) => (v < 0 ? 0 : v > max ? max : v);
+  const cl = (v: number) => (v < 0 ? 0 : v > dim - 1 ? dim - 1 : v);
   for (let i = 0; i < s.count; i++) {
     if (!(s.flags[i] & ObsFlag.SOLID)) continue;
-    const cx0 = cl(((s.minX[i] + half) * invCell) | 0);
-    const cz0 = cl(((s.minZ[i] + half) * invCell) | 0);
-    const cx1 = cl(((s.maxX[i] + half) * invCell) | 0);
-    const cz1 = cl(((s.maxZ[i] + half) * invCell) | 0);
-    for (let cz = cz0; cz <= cz1; cz++) blocked.fill(1, cz * dim + cx0, cz * dim + cx1 + 1);
+    const minX = s.minX[i], minZ = s.minZ[i], maxX = s.maxX[i], maxZ = s.maxZ[i];
+    if (s.hollow[i]) {
+      // walls only: fill the box, hollow out the interior, then punch the doorway
+      fillCells(g, minX, minZ, maxX, maxZ, 1);
+      fillCells(g, minX + WALL_T, minZ + WALL_T, maxX - WALL_T, maxZ - WALL_T, 0);
+      const mx = (minX + maxX) / 2, mz = (minZ + maxZ) / 2, hw = DOOR_W / 2;
+      const ds = s.doorSide[i];
+      if (ds === 0) fillCells(g, mx - hw, minZ - 1, mx + hw, minZ + WALL_T, 0);      // south
+      else if (ds === 1) fillCells(g, mx - hw, maxZ - WALL_T, mx + hw, maxZ + 1, 0); // north
+      else if (ds === 2) fillCells(g, minX - 1, mz - hw, minX + WALL_T, mz + hw, 0); // west
+      else fillCells(g, maxX - WALL_T, mz - hw, maxX + 1, mz + hw, 0);               // east
+    } else {
+      const cx0 = cl(((minX + half) * invCell) | 0), cz0 = cl(((minZ + half) * invCell) | 0);
+      const cx1 = cl(((maxX + half) * invCell) | 0), cz1 = cl(((maxZ + half) * invCell) | 0);
+      for (let cz = cz0; cz <= cz1; cz++) blocked.fill(1, cz * dim + cx0, cz * dim + cx1 + 1);
+    }
   }
   // seal everything AT or OUTSIDE the boundary (wall + dead zone) so nothing — neither
   // the player, a spawn, nor a relocated spawn — can ever occupy the outside ring.
@@ -219,16 +250,47 @@ function archetypeParts(kind: Kind, w: number, h: number, d: number, cx: number,
   return parts;
 }
 
+// hollow (enterable) building: a roofless wall ring with a door gap, so the
+// top-down camera sees the interior + the supply cache. Walls capped low.
+function hollowParts(h: number, w: number, d: number, cx: number, cz: number, tint: number[], doorSide: number): THREE.BufferGeometry[] {
+  const parts: THREE.BufferGeometry[] = [];
+  const add = (g: THREE.BufferGeometry, mul = 1) => parts.push(paint(g, tint[0] * mul, tint[1] * mul, tint[2] * mul));
+  const wallH = Math.min(h, 6.5), t = WALL_T, hw = DOOR_W / 2;
+  const minX = cx - w / 2, maxX = cx + w / 2, minZ = cz - d / 2, maxZ = cz + d / 2;
+  const wall = (x0: number, z0: number, x1: number, z1: number) => {
+    const ww = x1 - x0, dd = z1 - z0;
+    if (ww > 0.01 && dd > 0.01) add(new THREE.BoxGeometry(ww, wallH, dd).translate((x0 + x1) / 2, wallH / 2, (z0 + z1) / 2));
+  };
+  // south wall (z≈minZ) — split for a door when doorSide===0
+  if (doorSide === 0) { wall(minX, minZ, cx - hw, minZ + t); wall(cx + hw, minZ, maxX, minZ + t); }
+  else wall(minX, minZ, maxX, minZ + t);
+  // north wall (z≈maxZ)
+  if (doorSide === 1) { wall(minX, maxZ - t, cx - hw, maxZ); wall(cx + hw, maxZ - t, maxX, maxZ); }
+  else wall(minX, maxZ - t, maxX, maxZ);
+  // west wall (between the N/S walls)
+  if (doorSide === 2) { wall(minX, minZ + t, minX + t, cz - hw); wall(minX, cz + hw, minX + t, maxZ - t); }
+  else wall(minX, minZ + t, minX + t, maxZ - t);
+  // east wall
+  if (doorSide === 3) { wall(maxX - t, minZ + t, maxX, cz - hw); wall(maxX - t, cz + hw, maxX, maxZ - t); }
+  else wall(maxX - t, minZ + t, maxX, maxZ - t);
+  // a dark interior floor pad so the open room reads
+  add(new THREE.BoxGeometry(w - 2 * t, 0.18, d - 2 * t).translate(cx, 0.09, cz), 0.45);
+  return parts;
+}
+
 // ---- generation ----
-export function generateCity(seed: number, isTouch: boolean): City {
+export function generateCity(seed: number, isTouch: boolean, skipMeshes = false): City {
   void isTouch; // collidable set is identical across devices/tiers (seed-only) — fairness/determinism
   const rng = streamFrom(CITY_SALT, seed);
 
   const minXa: number[] = [], minZa: number[] = [], maxXa: number[] = [], maxZa: number[] = [];
-  const fl: number[] = [], hh: number[] = [], kk: number[] = [];
-  const push = (mnX: number, mnZ: number, mxX: number, mxZ: number, flag: number, height: number, kind: number): void => {
-    minXa.push(mnX); minZa.push(mnZ); maxXa.push(mxX); maxZa.push(mxZ); fl.push(flag); hh.push(height); kk.push(kind);
+  const fl: number[] = [], hh: number[] = [], kk: number[] = [], ho: number[] = [], dse: number[] = [];
+  const push = (mnX: number, mnZ: number, mxX: number, mxZ: number, flag: number, height: number, kind: number, hollow = 0, doorSide = 0): void => {
+    minXa.push(mnX); minZa.push(mnZ); maxXa.push(mxX); maxZa.push(mxZ);
+    fl.push(flag); hh.push(height); kk.push(kind); ho.push(hollow); dse.push(doorSide);
   };
+  // supply caches placed inside hollow buildings
+  const dx: number[] = [], dz: number[] = [], dty: number[] = [];
 
   const H = WORLD.HALF, B = CITY.BLOCK, road = CITY.ROAD_W;
   const lotIn = (B - road); // usable lot span
@@ -260,7 +322,15 @@ export function generateCity(seed: number, isTouch: boolean): City {
       else if (kind === Kind.House) height = 5 + rng() * 4;
       else if (kind === Kind.Ruin) height = 4 + rng() * 7;       // jagged remains
       else height = 1.5 + rng() * 2.5;                            // rubble pile
-      push(cx - fw / 2, cz - fd / 2, cx + fw / 2, cz + fd / 2, ObsFlag.SOLID, height, kind);
+      // ~50% of big-enough buildings are HOLLOW (enterable, with a supply cache inside)
+      const hollow = (fw >= HOLLOW_MIN && fd >= HOLLOW_MIN && rng() < 0.5) ? 1 : 0;
+      let doorSide = 0;
+      if (hollow) {
+        doorSide = (rng() * 4) | 0;
+        const dr = rng(); // cache type: health 50% / missiles 35% / nuke 15%
+        dx.push(cx); dz.push(cz); dty.push(dr < 0.5 ? 0 : dr < 0.85 ? 1 : 2);
+      }
+      push(cx - fw / 2, cz - fd / 2, cx + fw / 2, cz + fd / 2, ObsFlag.SOLID, height, kind, hollow, doorSide);
     }
   }
 
@@ -278,7 +348,9 @@ export function generateCity(seed: number, isTouch: boolean): City {
     minX: Float32Array.from(minXa), minZ: Float32Array.from(minZa),
     maxX: Float32Array.from(maxXa), maxZ: Float32Array.from(maxZa),
     flags: Uint8Array.from(fl), height: Float32Array.from(hh), kind: Uint8Array.from(kk),
+    hollow: Uint8Array.from(ho), doorSide: Uint8Array.from(dse),
   };
+  const drops: DropList = { count: dx.length, x: Float32Array.from(dx), z: Float32Array.from(dz), type: Uint8Array.from(dty) };
 
   // bake the collision bitmask
   const blockGrid: BlockGrid = {
@@ -294,7 +366,7 @@ export function generateCity(seed: number, isTouch: boolean): City {
   // buildings: ONE merged static geometry (per-building boxes baked into world
   // space, vertex-coloured by kind). One draw call, and it sidesteps a quirk where
   // box InstancedMeshes don't draw under this renderer build.
-  if (count > 0) {
+  if (!skipMeshes && count > 0) {
     const parts: THREE.BufferGeometry[] = [];
     for (let i = 0; i < count; i++) {
       const w = obstacles.maxX[i] - obstacles.minX[i];
@@ -305,7 +377,10 @@ export function generateCity(seed: number, isTouch: boolean): City {
       const tint = KIND_TINT[obstacles.kind[i]] ?? KIND_TINT[0];
       const j = 0.85 + rng() * 0.3; // grime jitter from the city stream
       const t = [tint[0] * j, tint[1] * j, tint[2] * j];
-      for (const p of archetypeParts(obstacles.kind[i] as Kind, w, h, d, cx, cz, t, rng)) parts.push(p);
+      const sub = obstacles.hollow[i]
+        ? hollowParts(h, w, d, cx, cz, t, obstacles.doorSide[i])      // roofless wall ring
+        : archetypeParts(obstacles.kind[i] as Kind, w, h, d, cx, cz, t, rng);
+      for (const p of sub) parts.push(p);
     }
     const merged = BufferGeometryUtils.mergeGeometries(parts, false);
     parts.forEach(p => p.dispose());
@@ -317,7 +392,7 @@ export function generateCity(seed: number, isTouch: boolean): City {
   }
 
   // roads: dark strips along the grid lines (cosmetic, never collidable)
-  {
+  if (!skipMeshes) {
     const lines = grid + 1;
     const roadCount = lines * 2;
     const quad = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
@@ -341,7 +416,7 @@ export function generateCity(seed: number, isTouch: boolean): City {
   void H; // (reserved for future bounds use)
 
   const city: City = {
-    obstacles, blockGrid, meshes, seed,
+    obstacles, blockGrid, drops, meshes, seed,
     setVisualTier(tier: number): void {
       // collidable rects are identical across tiers; only cosmetics toggle
       const show = tier <= 1;

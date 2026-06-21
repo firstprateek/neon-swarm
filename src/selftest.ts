@@ -123,7 +123,7 @@ function run(): void {
   // ---------- City: collidable world (seeded, deterministic, perf-safe) ----------
   {
     // 1. deterministic: same seed → identical rects; different seed → different
-    const a = generateCity(12345, false), a2 = generateCity(12345, false), b = generateCity(999, false);
+    const a = generateCity(12345, false, true), a2 = generateCity(12345, false, true), b = generateCity(999, false, true);
     const sameRects = a.obstacles.count === a2.obstacles.count &&
       a.obstacles.minX.every((v, i) => v === a2.obstacles.minX[i]) &&
       a.obstacles.height.every((v, i) => v === a2.obstacles.height[i]);
@@ -133,7 +133,7 @@ function run(): void {
 
     // 2. THE DESYNC GATE: generating the city must NOT advance the gameplay srand() stream
     setSeed(777); const before: number[] = []; for (let i = 0; i < 8; i++) before.push(srand());
-    setSeed(777); generateCity(getSeed(), false); const after: number[] = []; for (let i = 0; i < 8; i++) after.push(srand());
+    setSeed(777); generateCity(getSeed(), false, true); const after: number[] = []; for (let i = 0; i < 8; i++) after.push(srand());
     check('city: gen does NOT consume the gameplay rng (determinism intact)', before.every((v, i) => v === after[i]));
 
     // 3. streamFrom is independent + reproducible
@@ -164,7 +164,7 @@ function run(): void {
     check('city: open move is unobstructed', Math.abs(open.x + 48) < 1e-6 && Math.abs(open.z + 48) < 1e-6);
 
     // 7. tier-invariance: cosmetic LOD must NOT change the collidable set
-    const c = generateCity(2024, false);
+    const c = generateCity(2024, false, true);
     const beforeCount = c.obstacles.count, beforeX = c.obstacles.minX.slice();
     c.setVisualTier(0); c.setVisualTier(3);
     check('city: visual tier never changes collidable geometry',
@@ -190,6 +190,22 @@ function run(): void {
     for (let f = 0; f < 90; f++) { pg.build(pack.posX, pack.posZ, pack.count, 10, 0); pack.update(1 / 60, f / 60, 10, 0, pg, tg); }
     for (let i = 0; i < pack.count; i++) if (pack.posX[i] >= 1) crossed++;
     check('city: dense pack does NOT tunnel a 1-cell wall', crossed === 0, `${crossed} crossed`);
+
+    // ---- hollow buildings + supply caches ----
+    const hc = generateCity(424242, false, true);
+    const ob = hc.obstacles;
+    let hollowN = 0, eligible = 0;
+    for (let i = 0; i < ob.count; i++) {
+      if (ob.kind[i] === 5) continue; // skip boundary
+      const fw = ob.maxX[i] - ob.minX[i], fd = ob.maxZ[i] - ob.minZ[i];
+      if (fw >= 16 && fd >= 16) eligible++;
+      if (ob.hollow[i]) hollowN++;
+    }
+    check('city: a meaningful share of buildings are hollow', hollowN > 0 && hollowN <= eligible, `${hollowN}/${eligible}`);
+    check('city: ~half of eligible buildings hollow', Math.abs(hollowN / eligible - 0.5) < 0.18, `${(hollowN / eligible).toFixed(2)}`);
+    check('city: one drop per hollow building', hc.drops.count === hollowN, `${hc.drops.count} vs ${hollowN}`);
+    let dvalid = true; for (let i = 0; i < hc.drops.count; i++) if (hc.drops.type[i] > 2) dvalid = false;
+    check('city: drop types are valid (0..2)', dvalid);
   }
 
   // ---------- Bullets ----------

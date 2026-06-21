@@ -576,3 +576,96 @@ export class Particles {
     }
   }
 }
+
+/** drop kinds found inside hollow buildings */
+export const enum DropType { Health = 0, Missiles = 1, Nuke = 2 }
+// bright unlit colours so the caches glow in a dark interior (green / cyan / amber)
+const DROP_COLOR: [number, number, number][] = [
+  [0.25, 1.0, 0.45],  // Health
+  [0.35, 0.9, 1.0],   // Missiles
+  [1.0, 0.78, 0.2],   // Nuke
+];
+
+/**
+ * Collectible supply caches dropped inside hollow buildings. Like Gems but
+ * NO magnet — you must physically walk into the building to grab one. Positions
+ * + types come from the seeded city generator; collection is proximity-only.
+ */
+export class Drops {
+  readonly max: number;
+  count = 0;
+  readonly px: Float32Array;
+  readonly pz: Float32Array;
+  readonly type: Uint8Array;
+  readonly mesh: THREE.InstancedMesh;
+  private readonly _c = new THREE.Color();
+
+  constructor(max: number, scene: THREE.Scene) {
+    this.max = max;
+    this.px = new Float32Array(max);
+    this.pz = new Float32Array(max);
+    this.type = new Uint8Array(max);
+    const geo = new THREE.OctahedronGeometry(0.7); // non-box → renders fine as InstancedMesh
+    const mat = new THREE.MeshBasicMaterial({ toneMapped: false });
+    this.mesh = new THREE.InstancedMesh(geo, mat, max);
+    this.mesh.frustumCulled = false;
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    scene.add(this.mesh);
+    this.clear();
+  }
+
+  clear(): void { this.count = 0; this.mesh.count = 0; this.mesh.visible = false; }
+
+  /** load the city's drop list, then write all instance matrices + colours once */
+  load(xs: Float32Array, zs: Float32Array, types: Uint8Array, n: number): void {
+    this.count = Math.min(n, this.max);
+    const m = this.mesh.instanceMatrix.array as Float32Array;
+    for (let i = 0; i < this.count; i++) {
+      this.px[i] = xs[i]; this.pz[i] = zs[i]; this.type[i] = types[i];
+      this.writeMatrix(i, 0);
+      const c = DROP_COLOR[types[i]] ?? DROP_COLOR[0];
+      this._c.setRGB(c[0], c[1], c[2]);
+      this.mesh.setColorAt(i, this._c);
+    }
+    this.mesh.count = this.count;
+    this.mesh.visible = this.count > 0;
+    this.mesh.instanceMatrix.needsUpdate = true;
+    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+  }
+
+  private writeMatrix(i: number, bob: number): void {
+    const m = this.mesh.instanceMatrix.array as Float32Array;
+    const o = i * 16;
+    m[o] = 1; m[o + 1] = 0; m[o + 2] = 0; m[o + 3] = 0;
+    m[o + 4] = 0; m[o + 5] = 1; m[o + 6] = 0; m[o + 7] = 0;
+    m[o + 8] = 0; m[o + 9] = 0; m[o + 10] = 1; m[o + 11] = 0;
+    m[o + 12] = this.px[i]; m[o + 13] = 1.0 + bob; m[o + 14] = this.pz[i]; m[o + 15] = 1;
+  }
+
+  private remove(i: number): void {
+    const last = --this.count;
+    if (i !== last) {
+      this.px[i] = this.px[last]; this.pz[i] = this.pz[last]; this.type[i] = this.type[last];
+      const m = this.mesh.instanceMatrix.array as Float32Array;
+      m.copyWithin(i * 16, last * 16, last * 16 + 16);
+      if (this.mesh.instanceColor) {
+        const col = this.mesh.instanceColor.array as Float32Array;
+        col.copyWithin(i * 3, last * 3, last * 3 + 3);
+        this.mesh.instanceColor.needsUpdate = true;
+      }
+    }
+    this.mesh.count = this.count;
+    this.mesh.visible = this.count > 0;
+  }
+
+  /** bob the caches and collect any the player walks over; onPickup gives the type */
+  update(time: number, playerX: number, playerZ: number, onPickup: (type: number) => void): void {
+    const R2 = 2.2 * 2.2;
+    for (let i = this.count - 1; i >= 0; i--) {
+      const dx = playerX - this.px[i], dz = playerZ - this.pz[i];
+      if (dx * dx + dz * dz < R2) { onPickup(this.type[i]); this.remove(i); continue; }
+      this.writeMatrix(i, Math.sin(time * 3 + i) * 0.2);
+    }
+    if (this.count > 0) this.mesh.instanceMatrix.needsUpdate = true;
+  }
+}

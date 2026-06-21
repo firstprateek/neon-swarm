@@ -12,7 +12,7 @@ import { submitFeedback, flushFeedback, beaconFlush, deviceClass, APP_VERSION, t
 import { SpatialGrid } from './spatial';
 import { Swarm, ENEMY_TYPES, BOSS_TYPE, HIT_FLASH, PLAYER_RADIUS } from './swarm';
 import { generateCity, disposeCity, resolveMove, cellBlocked, type City, type BlockGrid } from './city';
-import { Bullets, Gems, Particles, Missiles } from './combat';
+import { Bullets, Gems, Particles, Missiles, Drops } from './combat';
 import { Blast } from './fx';
 import { AmbientMotes } from './ambient';
 import { Orbitals, Tesla } from './weapons';
@@ -253,11 +253,13 @@ async function start() {
     swarm.setBlockGrid(blockGrid); // relocate any spawn that lands in a building
     for (const m of city.meshes) scene.add(m);
     city.setVisualTier(quality.tier);
+    drops.load(city.drops.x, city.drops.z, city.drops.type, city.drops.count); // supply caches
   }
   const bullets = new Bullets(4096, scene);
   const gems = new Gems(4096, scene);
   const particles = new Particles(8192, scene);
   const missiles = new Missiles(24, scene);
+  const drops = new Drops(256, scene); // supply caches inside hollow buildings
   const blast = new Blast(scene); // cinematic nuke detonation FX
   const ambient = new AmbientMotes(260, scene); // drifting ash + embers (tiered in applyQuality)
   const orbitals = new Orbitals(6, scene);
@@ -1144,6 +1146,17 @@ async function start() {
 
     checkComboMilestones();
     gems.update(dt, state.time, player.position.x, player.position.z, state.magnet, v => { grantXp(state, v); sfx.sfxPickup(); });
+    // supply caches inside hollow buildings: walk over one to collect it
+    drops.update(state.time, player.position.x, player.position.z, type => {
+      let label: string;
+      if (type === 0) { state.hp = Math.min(state.maxHp, state.hp + 100); label = '+100 ❤'; }
+      else if (type === 1) { state.missiles = Math.min(MISSILE_MAX, state.missiles + 10); label = '+10 🚀'; }
+      else { state.nukes = Math.min(NUKE_MAX, state.nukes + 1); label = '+1 ☢'; }
+      const sp = projectToScreen(player.position.x, 1.4, player.position.z);
+      if (sp) hud.floatText(sp.sx, sp.sy, label, '#9bff52');
+      sfx.sfxPickup();
+      addShake(0.2);
+    });
     particles.update(dt);
 
     if (state.hp <= 0) {
