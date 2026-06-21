@@ -147,8 +147,10 @@ async function start() {
     screenUV.y.smoothstep(0.35, 1.0),
   );
   scene.background = null;
-  const FOG_BASE = 0.0026; // very light haze — 10% of the original 0.026, constant at every zoom
-  scene.fog = new THREE.FogExp2(SKY_HORIZON, FOG_BASE);
+  // fog now lives ONLY in the national park — 25%-strength haze there, none elsewhere.
+  // density cross-fades per-frame toward PARK_FOG/0 based on the player's current zone.
+  const PARK_FOG = 0.0065; // ~25% of the original 0.026 mood-fog
+  scene.fog = new THREE.FogExp2(SKY_HORIZON, 0);
 
   const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 300);
   camera.position.set(0, 26, 15);
@@ -1066,8 +1068,10 @@ async function start() {
     camera.position.x += (player.position.x - camera.position.x) * zlerp;
     camera.position.y += (26 * settings.zoom - camera.position.y) * zlerp;
     camera.position.z += (player.position.z + 15 * settings.zoom - camera.position.z) * zlerp;
-    // constant light haze at EVERY zoom + device (10% of the original) — no 1/zoom scaling
-    (scene.fog as THREE.FogExp2).density = FOG_BASE;
+    // fog only in the national park (Zone.Park === 2): cross-fade the density as you cross in/out
+    const inPark = city ? city.zoneAt(player.position.x, player.position.z) === 2 : false;
+    const fog = scene.fog as THREE.FogExp2;
+    fog.density += ((inPark ? PARK_FOG : 0) - fog.density) * Math.min(1, dt * 2.5);
     // transient, zero-mean screen-shake offset (re-centered by the lerp next frame)
     if (shake > 0.001) {
       camera.position.x += (Math.random() * 2 - 1) * shake;

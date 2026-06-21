@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import type { SpatialGrid } from './spatial';
 import { HIT_FLASH, type Swarm } from './swarm';
 import { srand } from './rng';
@@ -579,17 +580,59 @@ export class Particles {
 
 /** drop kinds found inside hollow buildings */
 export const enum DropType { Health = 0, Missiles = 1, Nuke = 2 }
-// bright unlit colours so the caches glow in a dark interior (green / cyan / amber)
-const DROP_COLOR: [number, number, number][] = [
-  [0.25, 1.0, 0.45],  // Health
-  [0.35, 0.9, 1.0],   // Missiles
-  [1.0, 0.78, 0.2],   // Nuke
-];
+
+// build a merged, vertex-coloured geometry from coloured primitive parts, so ONE
+// InstancedMesh per drop type carries a clear multi-colour silhouette. Unlit + bright
+// (MeshBasicMaterial, toneMapped off) so the caches read & glow in a dark interior.
+function paintGeo(g: THREE.BufferGeometry, c: [number, number, number]): THREE.BufferGeometry {
+  const ng = g.toNonIndexed();
+  g.dispose();
+  ng.deleteAttribute('uv'); ng.deleteAttribute('normal'); // keep attribute sets identical for the merge (basic mat needs neither)
+  const n = ng.attributes.position.count;
+  const col = new Float32Array(n * 3);
+  for (let k = 0; k < n; k++) { col[k * 3] = c[0]; col[k * 3 + 1] = c[1]; col[k * 3 + 2] = c[2]; }
+  ng.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return ng;
+}
+function mergeShape(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const m = BufferGeometryUtils.mergeGeometries(parts, false);
+  parts.forEach(p => p.dispose());
+  return m;
+}
+// Health → MEDIC KIT: pale case + a vivid red cross on the lid (body kept under the bloom threshold)
+function makeMedicKit(): THREE.BufferGeometry {
+  const c: [number, number, number] = [0.55, 0.65, 0.57], red: [number, number, number] = [1.0, 0.22, 0.22];
+  return mergeShape([
+    paintGeo(new THREE.BoxGeometry(0.95, 0.58, 0.72), c),
+    paintGeo(new THREE.BoxGeometry(0.5, 0.14, 0.17).translate(0, 0.33, 0), red),
+    paintGeo(new THREE.BoxGeometry(0.17, 0.14, 0.5).translate(0, 0.33, 0), red),
+  ]);
+}
+// Missiles → ROCKET: grey body, glowing cyan nose + tail fins
+function makeRocket(): THREE.BufferGeometry {
+  const body: [number, number, number] = [0.56, 0.62, 0.7], cyan: [number, number, number] = [0.4, 0.95, 1.0];
+  return mergeShape([
+    paintGeo(new THREE.CylinderGeometry(0.2, 0.2, 0.78, 10), body),
+    paintGeo(new THREE.ConeGeometry(0.2, 0.42, 10).translate(0, 0.6, 0), cyan),
+    paintGeo(new THREE.ConeGeometry(0.14, 0.34, 4).translate(0.2, -0.36, 0), cyan),
+    paintGeo(new THREE.ConeGeometry(0.14, 0.34, 4).translate(-0.2, -0.36, 0), cyan),
+  ]);
+}
+// Nuke → BOMB: dark casing, amber warning band + tail fin
+function makeNuke(): THREE.BufferGeometry {
+  const body: [number, number, number] = [0.34, 0.36, 0.3], amber: [number, number, number] = [1.0, 0.8, 0.22];
+  return mergeShape([
+    paintGeo(new THREE.SphereGeometry(0.46, 12, 10), body),
+    paintGeo(new THREE.TorusGeometry(0.47, 0.07, 6, 18).rotateX(Math.PI / 2), amber),
+    paintGeo(new THREE.ConeGeometry(0.16, 0.36, 5).translate(0, -0.56, 0), amber),
+  ]);
+}
 
 /**
  * Collectible supply caches dropped inside hollow buildings. Like Gems but
  * NO magnet — you must physically walk into the building to grab one. Positions
  * + types come from the seeded city generator; collection is proximity-only.
+ * Each type is its OWN InstancedMesh so it gets a clear, distinct silhouette.
  */
 export class Drops {
   readonly max: number;
@@ -597,75 +640,68 @@ export class Drops {
   readonly px: Float32Array;
   readonly pz: Float32Array;
   readonly type: Uint8Array;
-  readonly mesh: THREE.InstancedMesh;
-  private readonly _c = new THREE.Color();
+  private readonly meshes: THREE.InstancedMesh[]; // indexed by DropType
+  private readonly _m = new THREE.Matrix4();
 
   constructor(max: number, scene: THREE.Scene) {
     this.max = max;
     this.px = new Float32Array(max);
     this.pz = new Float32Array(max);
     this.type = new Uint8Array(max);
-    const geo = new THREE.OctahedronGeometry(0.7); // non-box → renders fine as InstancedMesh
-    const mat = new THREE.MeshBasicMaterial({ toneMapped: false });
-    this.mesh = new THREE.InstancedMesh(geo, mat, max);
-    this.mesh.frustumCulled = false;
-    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    scene.add(this.mesh);
-    this.clear();
+    const mat = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false });
+    const geos = [makeMedicKit(), makeRocket(), makeNuke()];
+    this.meshes = geos.map(g => {
+      const im = new THREE.InstancedMesh(g, mat, max);
+      im.frustumCulled = false;
+      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      im.count = 0; im.visible = false;
+      scene.add(im);
+      return im;
+    });
   }
 
-  clear(): void { this.count = 0; this.mesh.count = 0; this.mesh.visible = false; }
+  clear(): void {
+    this.count = 0;
+    for (const im of this.meshes) { im.count = 0; im.visible = false; }
+  }
 
-  /** load the city's drop list, then write all instance matrices + colours once */
+  /** load the city's drop list; update() lays out + animates the instances */
   load(xs: Float32Array, zs: Float32Array, types: Uint8Array, n: number): void {
     this.count = Math.min(n, this.max);
-    const m = this.mesh.instanceMatrix.array as Float32Array;
+    for (let i = 0; i < this.count; i++) { this.px[i] = xs[i]; this.pz[i] = zs[i]; this.type[i] = types[i]; }
+    this.layout(0);
+  }
+
+  /** rewrite every instance matrix into its type's mesh (bob + slow spin reveals the 3D shape) */
+  private layout(time: number): void {
+    const counts = [0, 0, 0];
     for (let i = 0; i < this.count; i++) {
-      this.px[i] = xs[i]; this.pz[i] = zs[i]; this.type[i] = types[i];
-      this.writeMatrix(i, 0);
-      const c = DROP_COLOR[types[i]] ?? DROP_COLOR[0];
-      this._c.setRGB(c[0], c[1], c[2]);
-      this.mesh.setColorAt(i, this._c);
+      const t = this.type[i] < 3 ? this.type[i] : 0;
+      const mesh = this.meshes[t];
+      const bob = Math.sin(time * 3 + i) * 0.2;
+      this._m.makeRotationY(time * 1.1 + i * 1.7);
+      this._m.setPosition(this.px[i], 1.15 + bob, this.pz[i]);
+      mesh.setMatrixAt(counts[t]++, this._m);
     }
-    this.mesh.count = this.count;
-    this.mesh.visible = this.count > 0;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    for (let t = 0; t < 3; t++) {
+      const im = this.meshes[t];
+      im.count = counts[t]; im.visible = counts[t] > 0;
+      im.instanceMatrix.needsUpdate = true;
+    }
   }
 
-  private writeMatrix(i: number, bob: number): void {
-    const m = this.mesh.instanceMatrix.array as Float32Array;
-    const o = i * 16;
-    m[o] = 1; m[o + 1] = 0; m[o + 2] = 0; m[o + 3] = 0;
-    m[o + 4] = 0; m[o + 5] = 1; m[o + 6] = 0; m[o + 7] = 0;
-    m[o + 8] = 0; m[o + 9] = 0; m[o + 10] = 1; m[o + 11] = 0;
-    m[o + 12] = this.px[i]; m[o + 13] = 1.0 + bob; m[o + 14] = this.pz[i]; m[o + 15] = 1;
-  }
-
-  private remove(i: number): void {
+  private removeAt(i: number): void {
     const last = --this.count;
-    if (i !== last) {
-      this.px[i] = this.px[last]; this.pz[i] = this.pz[last]; this.type[i] = this.type[last];
-      const m = this.mesh.instanceMatrix.array as Float32Array;
-      m.copyWithin(i * 16, last * 16, last * 16 + 16);
-      if (this.mesh.instanceColor) {
-        const col = this.mesh.instanceColor.array as Float32Array;
-        col.copyWithin(i * 3, last * 3, last * 3 + 3);
-        this.mesh.instanceColor.needsUpdate = true;
-      }
-    }
-    this.mesh.count = this.count;
-    this.mesh.visible = this.count > 0;
+    if (i !== last) { this.px[i] = this.px[last]; this.pz[i] = this.pz[last]; this.type[i] = this.type[last]; }
   }
 
-  /** bob the caches and collect any the player walks over; onPickup gives the type */
+  /** collect any cache the player walks over (onPickup gives the type), then animate */
   update(time: number, playerX: number, playerZ: number, onPickup: (type: number) => void): void {
     const R2 = 2.2 * 2.2;
     for (let i = this.count - 1; i >= 0; i--) {
       const dx = playerX - this.px[i], dz = playerZ - this.pz[i];
-      if (dx * dx + dz * dz < R2) { onPickup(this.type[i]); this.remove(i); continue; }
-      this.writeMatrix(i, Math.sin(time * 3 + i) * 0.2);
+      if (dx * dx + dz * dz < R2) { onPickup(this.type[i]); this.removeAt(i); }
     }
-    if (this.count > 0) this.mesh.instanceMatrix.needsUpdate = true;
+    this.layout(time);
   }
 }
