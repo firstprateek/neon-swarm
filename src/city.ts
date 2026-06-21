@@ -61,6 +61,7 @@ export interface City {
   meshes: THREE.Object3D[];
   seed: number;
   zoneAt(x: number, z: number): Zone; // downtown / suburb / park at a world point
+  warp: ZoneWarp;                     // the seed's zone-ring warp coeffs (for the ground shader)
   setVisualTier(tier: number): void;
   updateTunnels(px: number, pz: number, dt: number): void;
   faceSigns(cx: number, cy: number, cz: number): void; // turn the gateway signs to face the camera
@@ -317,9 +318,9 @@ function hollowParts(h: number, w: number, d: number, cx: number, cz: number, ti
 }
 
 // ---- zones: 3 concentric, angularly-warped rings (Downtown → Suburb → Park) ----
-interface WarpCoeffs { a1: number; a2: number; a3: number; p1: number; p2: number; p3: number; }
-interface ZoneWarp { lo: WarpCoeffs; hi: WarpCoeffs; }
-const ZONE = { R0_BASE: 200, R0_AMP: 34, R1_BASE: 400, R1_AMP: 52 } as const;
+export interface WarpCoeffs { a1: number; a2: number; a3: number; p1: number; p2: number; p3: number; }
+export interface ZoneWarp { lo: WarpCoeffs; hi: WarpCoeffs; }
+export const ZONE = { R0_BASE: 200, R0_AMP: 34, R1_BASE: 400, R1_AMP: 52 } as const;
 
 const TWO_PI = Math.PI * 2;
 function warpVal(th: number, c: WarpCoeffs): number {
@@ -931,6 +932,7 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
   const city: City = {
     obstacles, blockGrid, drops, meshes, seed,
     zoneAt(x: number, z: number): Zone { return zoneAt(x, z, warp); },
+    warp,
     faceSigns(cx: number, cy: number, cz: number): void {
       for (let i = 0; i < signMeshes.length; i++) signMeshes[i].lookAt(cx, cy, cz); // always readable, any approach
     },

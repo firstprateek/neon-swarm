@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { pass, uniform, mix, vec3, screenUV, luminance, clamp, oneMinus,
-  Fn, positionWorld, color, smoothstep, mx_fractal_noise_float, mx_noise_float } from 'three/tsl';
+  Fn, positionWorld, color, smoothstep, mx_fractal_noise_float, mx_noise_float,
+  float, sin, atan2, length } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { createState, grantXp, rollUpgrades, registerKill, tickCombo, UPGRADES, ammoDropFor,
   MISSILE_BASE, MISSILE_MAX, NUKE_MAX, MISSILE_REFILL, MISSILE_DMG, MISSILE_AOE, NUKE_DMG } from './state';
@@ -169,21 +170,39 @@ async function start() {
   // gated by uDetail so they tier off cheaply. All luminance < 0.13 -> never blooms.
   const uDetail = uniform(1.0); // 1 full · 0.5 cracks-only · 0 base (set in applyQuality)
   let groundMat: THREE.Material;
+  type V3Uniform = { value: THREE.Vector3 };
+  let groundWarp: { loA: V3Uniform; loP: V3Uniform; hiA: V3Uniform; hiP: V3Uniform } | null = null;
+  // zone-ring warp uniforms — set per-seed in buildWorld so the ground zones match the buildings
+  const wLoA = uniform(new THREE.Vector3()), wLoP = uniform(new THREE.Vector3());
+  const wHiA = uniform(new THREE.Vector3()), wHiP = uniform(new THREE.Vector3());
+  groundWarp = { loA: wLoA, loP: wLoP, hiA: wHiA, hiP: wHiP };
   try {
     const groundColor = Fn(() => {
       const p = positionWorld.xz;
-      // broad dust <-> dusty-tan mottle (wide palette so cracked earth actually reads)
+      const d = length(p), th = atan2(p.y, p.x);
+      // warped zone radii — must mirror city.zoneAt (R0_BASE 200 ±34, R1_BASE 400 ±52)
+      const warpLo = wLoA.x.mul(sin(th.add(wLoP.x))).add(wLoA.y.mul(sin(th.mul(2).add(wLoP.y)))).add(wLoA.z.mul(sin(th.mul(3).add(wLoP.z))));
+      const warpHi = wHiA.x.mul(sin(th.add(wHiP.x))).add(wHiA.y.mul(sin(th.mul(2).add(wHiP.y)))).add(wHiA.z.mul(sin(th.mul(3).add(wHiP.z))));
+      const r0 = float(200).add(warpLo.mul(34)), r1 = float(400).add(warpHi.mul(52)), W = float(18);
+      const sInner = smoothstep(r0.sub(W), r0.add(W), d), sOuter = smoothstep(r1.sub(W), r1.add(W), d);
+      const fDown = oneMinus(sInner), fSub = sInner.sub(sOuter), fPark = sOuter;
+      // shared mottle + crack network (mx_noise_float — identical on WebGPU + WebGL2, unlike worley)
       const mott = mx_fractal_noise_float(p.mul(0.05), 4, 2.0, 0.5).mul(0.5).add(0.5);
-      const base = mix(color(0x141009), color(0x352a18), mott);
-      // crack network: near-black lines along a mid-freq noise's zero-crossings
-      // (mx_noise_float — identical on WebGPU + WebGL2, unlike worley)
       const crack = smoothstep(0.09, 0.0, mx_noise_float(p.mul(0.3)).abs());
-      const seamed = mix(base, color(0x080503), crack);
-      // broad dried-blood + scorch splotches, tiered off cheaply by uDetail
+      // DOWNTOWN — cool blue-grey concrete, hard cracks
+      const downC = mix(mix(color(0x1b2230), color(0x394454), mott), color(0x080a0e), crack);
+      // SUBURB — warm dusty tan
+      const subC = mix(mix(color(0x241a0e), color(0x4d3a1f), mott), color(0x0c0703), crack.mul(0.7));
+      // PARK — vivid green grass: grassy tuft mottle, few cracks
+      const grass = mx_fractal_noise_float(p.mul(0.12), 3, 2.0, 0.5).mul(0.5).add(0.5);
+      const parkC = mix(mix(color(0x123512), color(0x32601f), grass), color(0x1d3d12), smoothstep(0.55, 0.85, grass).mul(0.5));
+      const zoned = downC.mul(fDown).add(subC.mul(fSub)).add(parkC.mul(fPark));
+      // dried-blood + scorch splotches only in the built-up zones (not the park)
+      const builtUp = oneMinus(fPark);
       const splotch = mx_fractal_noise_float(p.mul(0.013), 3, 2.0, 0.5).mul(0.5).add(0.5);
-      const blood = smoothstep(0.66, 0.82, splotch).mul(uDetail);
-      const bloodied = mix(seamed, color(0x3a140f), blood.mul(0.7));     // dried maroon
-      const scorch = smoothstep(0.22, 0.04, splotch).mul(uDetail);
+      const blood = smoothstep(0.66, 0.82, splotch).mul(uDetail).mul(builtUp);
+      const bloodied = mix(zoned, color(0x3a140f), blood.mul(0.7));     // dried maroon
+      const scorch = smoothstep(0.22, 0.04, splotch).mul(uDetail).mul(builtUp);
       return mix(bloodied, color(0x0a0604), scorch.mul(0.6));            // char / burn
     });
     const m = new THREE.MeshStandardNodeMaterial({ roughness: 1.0, metalness: 0.0 });
@@ -256,6 +275,11 @@ async function start() {
     for (const m of city.meshes) scene.add(m);
     city.setVisualTier(quality.tier);
     drops.load(city.drops.x, city.drops.z, city.drops.type, city.drops.count); // supply caches
+    if (groundWarp) { // match the ground-shader zone rings to this seed's warp
+      const w = city.warp;
+      groundWarp.loA.value.set(w.lo.a1, w.lo.a2, w.lo.a3); groundWarp.loP.value.set(w.lo.p1, w.lo.p2, w.lo.p3);
+      groundWarp.hiA.value.set(w.hi.a1, w.hi.a2, w.hi.a3); groundWarp.hiP.value.set(w.hi.p1, w.hi.p2, w.hi.p3);
+    }
   }
   const bullets = new Bullets(4096, scene);
   const gems = new Gems(4096, scene);
