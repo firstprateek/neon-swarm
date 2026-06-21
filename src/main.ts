@@ -1203,6 +1203,7 @@ async function start() {
     else if (over) particles.update(simDt); // let the death explosion play out
     blast.update(dt); // real-time so the nuke FX plays out through hit-stop / level-up
     ambient.update(dt, camera.position.x, camera.position.z, now / 1000); // the dead world keeps breathing
+    city?.updateTunnels(player.position.x, player.position.z, dt); // fade a tunnel roof while you're inside it (real dt)
     hud.tick(dt);
     if (touch) { if (canAct()) touch.show(); else touch.hide(); } // show only during active play
 

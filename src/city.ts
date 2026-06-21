@@ -375,6 +375,22 @@ function pickKind(zone: Zone, kr: number): Kind {
   return kr < 0.50 ? Kind.Rubble : kr < 0.80 ? Kind.Ruin : Kind.House; // park: ruined & sparse
 }
 
+// ---- structures: the carve pass that opens bridge decks & tunnel bores ----
+// After bake() blocks every SOLID rect (incl. water & tunnel massifs), this re-clears
+// every PASS_UNDER rect's cells → the ONLY free path across the water / through the
+// mountain. Order-independent of push order (regions baked first, corridors carved last).
+function carveCorridors(g: BlockGrid, s: ObstacleSoA): void {
+  const dim = g.dim, half = g.half, inv = g.invCell;
+  for (let i = 0; i < s.count; i++) {
+    if (!(s.flags[i] & ObsFlag.PASS_UNDER)) continue;
+    let cx0 = ((s.minX[i] + half) * inv) | 0, cx1 = ((s.maxX[i] + half) * inv) | 0;
+    let cz0 = ((s.minZ[i] + half) * inv) | 0, cz1 = ((s.maxZ[i] + half) * inv) | 0;
+    if (cx0 < 0) cx0 = 0; if (cz0 < 0) cz0 = 0;
+    if (cx1 >= dim) cx1 = dim - 1; if (cz1 >= dim) cz1 = dim - 1;
+    for (let cz = cz0; cz <= cz1; cz++) g.blocked.fill(0, cz * dim + cx0, cz * dim + cx1 + 1);
+  }
+}
+
 // ---- generation ----
 export function generateCity(seed: number, isTouch: boolean, skipMeshes = false): City {
   void isTouch; // collidable set is identical across devices/tiers (seed-only) — fairness/determinism
@@ -506,6 +522,37 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     }
   }
 
+  // (5) structures — billboards (walk UNDER), bridges (walk OVER lakes), tunnels (walk
+  // THROUGH a massif, roof fades). Analytic placement (zero rng) so the stream is unchanged.
+  const bridges: { x: number; z: number; len: number; hw: number }[] = [];
+  const tunnels: { minX: number; minZ: number; maxX: number; maxZ: number; cx: number; cz: number }[] = [];
+  const billboards: { x: number; z: number; ang: number; lit: boolean }[] = [];
+  // a walkable deck spans each lake (PASS_UNDER → carved free over the SOLID water)
+  for (const lk of lakes) {
+    const half = lk.r + 7, hw = 7;
+    push(lk.x - half, lk.z - hw, lk.x + half, lk.z + hw, ObsFlag.PASS_UNDER, 1.4, Kind.Bridge);
+    bridges.push({ x: lk.x, z: lk.z, len: half * 2, hw });
+  }
+  // ≤2 tunnels on the X-axis spoke (axis-aligned bore), out in the park
+  for (const sgn of [1, -1]) {
+    const cx = sgn * 470, cz = 0;
+    if (zone(cx, cz) !== Zone.Park) continue;
+    push(cx - 26, cz - 26, cx + 26, cz + 26, ObsFlag.SOLID, 15, Kind.Tunnel);        // massif (the hill)
+    push(cx - 27, cz - 8, cx + 27, cz + 8, ObsFlag.PASS_UNDER, 9, Kind.Tunnel);      // bore → carved free
+    tunnels.push({ minX: cx - 27, minZ: cz - 8, maxX: cx + 27, maxZ: cz + 8, cx, cz });
+  }
+  // billboards lining the radial spokes — 2 SOLID posts you walk between/under a raised sign
+  for (let s = 0; s < 6; s++) {
+    const a = s * (Math.PI / 3), rad = 270 + (s & 1) * 120; // alternate suburb / outer-park radii
+    const px = -Math.sin(a), pz = Math.cos(a);          // perpendicular to the spoke
+    const bx = Math.cos(a) * rad + px * 12, bz = Math.sin(a) * rad + pz * 12; // set beside the road
+    if (zone(bx, bz) === Zone.Downtown) continue;       // keep the dense core clear
+    const pw = 0.9, ph = 9;
+    push(bx + px * -4 - pw / 2, bz + pz * -4 - pw / 2, bx + px * -4 + pw / 2, bz + pz * -4 + pw / 2, ObsFlag.SOLID, ph, Kind.Billboard);
+    push(bx + px * 4 - pw / 2, bz + pz * 4 - pw / 2, bx + px * 4 + pw / 2, bz + pz * 4 + pw / 2, ObsFlag.SOLID, ph, Kind.Billboard);
+    billboards.push({ x: bx, z: bz, ang: a, lit: (s & 1) === 0 });
+  }
+
   // boundary ring — thin tall barricade walls that resolve out of the fog as the city edge
   const t = 4, wallH = 20;
   push(-Bd - t, -Bd - t, Bd + t, -Bd, ObsFlag.SOLID, wallH, Kind.Boundary); // south
@@ -530,6 +577,7 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     blocked: new Uint8Array(DIM * DIM),
   };
   bake(blockGrid, obstacles);
+  carveCorridors(blockGrid, obstacles); // open bridge decks & tunnel bores over the baked SOLID
 
   // ---- meshes ----
   const meshes: THREE.Object3D[] = [];
@@ -622,6 +670,47 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     meshes.push(water);
   }
 
+  // structures: bridge decks + rails + billboard posts/signs → ONE merged Lambert mesh
+  if (!skipMeshes && (bridges.length > 0 || billboards.length > 0)) {
+    const parts: THREE.BufferGeometry[] = [];
+    const bt = KIND_TINT[Kind.Bridge], bbt = KIND_TINT[Kind.Billboard];
+    for (const br of bridges) {
+      parts.push(paint(new THREE.BoxGeometry(br.len, 0.8, br.hw * 2).translate(br.x, 1.3, br.z), bt[0], bt[1], bt[2])); // deck
+      for (const s of [-1, 1]) parts.push(paint(new THREE.BoxGeometry(br.len, 1.5, 0.6).translate(br.x, 2.0, br.z + s * (br.hw - 0.4)), bt[0] * 1.1, bt[1] * 1.1, bt[2] * 1.1)); // rails
+    }
+    for (const bb of billboards) {
+      const px = -Math.sin(bb.ang), pz = Math.cos(bb.ang);
+      for (const s of [-4, 4]) parts.push(paint(new THREE.BoxGeometry(0.9, 9, 0.9).translate(bb.x + px * s, 4.5, bb.z + pz * s), bbt[0], bbt[1], bbt[2])); // posts
+      const lum = bb.lit ? 1.15 : 0.9; // lit signs a touch brighter, but kept well under the bloom threshold
+      parts.push(paint(new THREE.BoxGeometry(11, 4.6, 0.5).rotateY(-bb.ang).translate(bb.x, 10.6, bb.z), bbt[0] * lum + (bb.lit ? 0.05 : 0), bbt[1] * lum, bbt[2] * lum + (bb.lit ? 0.06 : 0)));
+    }
+    const merged = BufferGeometryUtils.mergeGeometries(parts, false);
+    parts.forEach(p => p.dispose());
+    const smat = new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0x141210, flatShading: true });
+    const smesh = new THREE.Mesh(merged, smat);
+    smesh.frustumCulled = false;
+    meshes.push(smesh);
+  }
+
+  // tunnel massifs — each its OWN mesh+material so the roof fades independently as you pass through
+  const tunnelRT: { mat: THREE.MeshLambertMaterial; minX: number; minZ: number; maxX: number; maxZ: number; alpha: number }[] = [];
+  if (!skipMeshes) {
+    const tnt = KIND_TINT[Kind.Tunnel];
+    for (const tn of tunnels) {
+      const parts = [
+        paint(new THREE.BoxGeometry(54, 15, 54).translate(tn.cx, 7.5, tn.cz), tnt[0], tnt[1], tnt[2]),
+        paint(new THREE.BoxGeometry(40, 6, 40).rotateY(0.3).translate(tn.cx, 16, tn.cz), tnt[0] * 1.1, tnt[1] * 1.1, tnt[2] * 1.1),
+      ];
+      const merged = BufferGeometryUtils.mergeGeometries(parts, false);
+      parts.forEach(p => p.dispose());
+      const tmat = new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0x0e0c0b, flatShading: true });
+      const tmesh = new THREE.Mesh(merged, tmat);
+      tmesh.frustumCulled = false; tmesh.renderOrder = 3;
+      meshes.push(tmesh);
+      tunnelRT.push({ mat: tmat, minX: tn.minX, minZ: tn.minZ, maxX: tn.maxX, maxZ: tn.maxZ, alpha: 1 });
+    }
+  }
+
   // roads: oriented dark quads — downtown grid disc + winding suburb arterials + radial spokes
   if (!skipMeshes && roadSegs.length > 0) {
     const quad = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
@@ -655,7 +744,19 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
       const show = tier <= 1;
       for (const c of cosmetic) c.visible = show;
     },
-    updateTunnels(): void { /* Phase 3 */ },
+    // fade a tunnel's roof when the PLAYER (only) is inside its bore — sub-µs, real dt.
+    // Collision is decoupled: the horde streams through the carved-free bore regardless.
+    updateTunnels(px: number, pz: number, dt: number): void {
+      for (let i = 0; i < tunnelRT.length; i++) {
+        const tr = tunnelRT[i];
+        const inside = px >= tr.minX && px <= tr.maxX && pz >= tr.minZ && pz <= tr.maxZ;
+        const target = inside ? 0.14 : 1.0;
+        tr.alpha += (target - tr.alpha) * Math.min(1, dt * 6); // frame-rate-independent ease
+        tr.mat.opacity = tr.alpha;
+        tr.mat.transparent = tr.alpha < 0.999;
+        tr.mat.depthWrite = !tr.mat.transparent;
+      }
+    },
   };
   return city;
 }

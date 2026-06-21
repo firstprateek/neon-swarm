@@ -245,6 +245,22 @@ function run(): void {
     check('city: lakes capped under nearestFree escape (<48)', maxWaterR < 48, `${maxWaterR.toFixed(0)}`);
     check('city: mountains capped under nearestFree escape (<48)', maxMtnR < 48, `${maxMtnR.toFixed(0)}`);
     check('city: terrain present still leaves world navigable', _reachable(tc.blockGrid) > 100000, `${_reachable(tc.blockGrid)}`);
+
+    // ---- structures (billboards / bridges / tunnels) ----
+    const sc = generateCity(777, false, true);
+    const so = sc.obstacles;
+    let bridge = 0, tunnel = 0, billboard = 0, passUnder = 0, postSolid = true;
+    for (let i = 0; i < so.count; i++) {
+      const k = so.kind[i], f = so.flags[i];
+      if (k === 13) bridge++;
+      else if (k === 14) tunnel++;
+      else if (k === 12) { billboard++; if (!(f & 1)) postSolid = false; }
+      if ((k === 13 || k === 14) && (f & 2)) passUnder++;
+    }
+    check('city: billboards line the roads', billboard >= 2, `${billboard} posts`);
+    check('city: billboard posts are solid', postSolid);
+    check('city: bridge/tunnel decks (when present) are PASS_UNDER', (bridge + tunnel === 0) || passUnder > 0, `b${bridge} t${tunnel} pu${passUnder}`);
+    check('city: structures still leave world navigable', _reachable(sc.blockGrid) > 100000);
   }
 
   // ---------- Bullets ----------
