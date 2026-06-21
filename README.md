@@ -1,6 +1,6 @@
 # NEON SWARM
 
-A 3D swarm-survivor game (Vampire Survivors style) built for raw browser performance — pick a post-apocalyptic survivor, hold off the zombie horde, and beat your friends on the same seed.
+A 3D swarm-survivor game (Vampire Survivors style) built for raw browser performance — pick a post-apocalyptic survivor, hold off the zombie horde, and beat your friends on the same seed. Wrapped in a "Hazard Deck" UI: chamfered industrial panels, stencil headers, and amber hazard trim over the cyan neon.
 
 ### ▶ Play: https://firstprateek.github.io/neon-swarm/
 
@@ -21,7 +21,8 @@ Pick **☀ Daily Challenge** or **▶ Free Play**, choose a survivor, then survi
 
 | Input | Action |
 | --- | --- |
-| `WASD` / arrows | Move (and aim — the survivor faces where you move) |
+| `WASD` / arrows | **Move** |
+| Mouse | **Aim** (in manual control modes) — the survivor faces the cursor; **left-click** holds fire, **right-click** launches a missile |
 | `Space` | **Fire** the gun (only needed when auto-fire is off) |
 | `E` | **Missile** — AoE rocket (limited, refills over time) |
 | `Q` | **Nuke** — clears the screen (very limited) |
@@ -41,8 +42,10 @@ Pick how much the game helps you aim and fire — set a preset (or flip the togg
 | Mode | Auto-fire | Gun aim | Missile |
 | --- | --- | --- | --- |
 | **Easy** | on | auto-locks nearest | homes |
-| **Medium** | on | follows your facing | fires where you face |
-| **Hard** | off (hold Fire) | follows your facing | fires where you face |
+| **Medium** | on | aims at your mouse (the body faces the cursor) | fires toward the cursor |
+| **Hard** | off (hold Fire / left-click) | aims at your mouse | fires toward the cursor |
+
+In the **manual** modes (Medium / Hard) aiming is decoupled from movement — you walk with `WASD` and aim independently with the mouse (true twin-stick), instead of only firing where you walk. On mobile this maps to the movement joystick plus a tap-aim/auto-aim assist.
 
 In **Free Play** you can change controls anytime. In a **Daily Challenge** you choose the mode at the start and it's locked for that run — and **each mode has its own leaderboard** (an Easy score isn't compared against a Hard one).
 
@@ -80,7 +83,7 @@ Other:
 
 - **Cheat codes** — just type the word during a run: `god`, `guns`, `tank`, `boss`, `horde`, `rich`, `levelup`.
 - `window.__spawnTest(n)` in the console — benchmark hook: spawns `n` enemies around the player with effectively infinite HP (a stress test, not a fair fight). 15,000 enemies hold 120 FPS on an Apple Silicon Mac.
-- **`/test.html`** — in-browser self-test suite (143 tests) importing the real modules; results land on `window.__testResults`.
+- **`/test.html`** — in-browser self-test suite (207 tests) importing the real modules; results land on `window.__testResults`.
 
 ## Roadmap
 
