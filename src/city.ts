@@ -63,6 +63,7 @@ export interface City {
   zoneAt(x: number, z: number): Zone; // downtown / suburb / park at a world point
   setVisualTier(tier: number): void;
   updateTunnels(px: number, pz: number, dt: number): void;
+  faceSigns(cx: number, cy: number, cz: number): void; // turn the gateway signs to face the camera
 }
 
 const WALL_T = 2;   // hollow-building wall thickness (world units)
@@ -92,7 +93,7 @@ const KIND_TINT: [number, number, number][] = [
   [0.19, 0.17, 0.15],  // Rubble — dark debris
   [0.22, 0.24, 0.28],  // Boundary — cold barricade
   [0.30, 0.33, 0.40],  // Tower — glassy grey-blue
-  [0.36, 0.31, 0.22],  // Mall — tan retail block
+  [0.31, 0.27, 0.2],   // Mall — tan retail block (kept under bloom on its big lit faces)
   [0.20, 0.21, 0.19],  // Mountain — grey-green rock
   [0.18, 0.14, 0.10],  // TreeTrunk — dark bark
   [0.05, 0.12, 0.15],  // Water — dark teal
@@ -394,6 +395,48 @@ function carveCorridors(g: BlockGrid, s: ObstacleSoA): void {
   }
 }
 
+// a glowing neon sign face (dark panel + accent-coloured text) baked to a canvas texture
+function makeSignTexture(text: string, accent: string): THREE.CanvasTexture {
+  const cw = 640, ch = 200;
+  const cv = document.createElement('canvas');
+  cv.width = cw; cv.height = ch;
+  const ctx = cv.getContext('2d')!;
+  ctx.fillStyle = '#070a12'; ctx.fillRect(0, 0, cw, ch);
+  ctx.strokeStyle = accent; ctx.lineWidth = 10; ctx.strokeRect(12, 12, cw - 24, ch - 24);
+  ctx.fillStyle = accent; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.shadowColor = accent; ctx.shadowBlur = 24;
+  const words = text.split(' ');
+  const lines = text.length > 12 && words.length > 1
+    ? [words.slice(0, Math.ceil(words.length / 2)).join(' '), words.slice(Math.ceil(words.length / 2)).join(' ')]
+    : [text];
+  const fs = lines.length > 1 ? 66 : 88, lh = fs * 1.12;
+  ctx.font = `900 ${fs}px "Arial Black", Impact, sans-serif`;
+  const y0 = ch / 2 - (lines.length - 1) * lh / 2;
+  lines.forEach((ln, i) => ctx.fillText(ln, cw / 2, y0 + i * lh));
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+// asphalt parking lot with painted white stall lines + a centre drive lane
+function makeParkingTexture(): THREE.CanvasTexture {
+  const s = 512;
+  const cv = document.createElement('canvas');
+  cv.width = s; cv.height = s;
+  const ctx = cv.getContext('2d')!;
+  ctx.fillStyle = '#191b21'; ctx.fillRect(0, 0, s, s); // dark asphalt
+  ctx.strokeStyle = 'rgba(205,205,180,0.45)'; ctx.lineWidth = 4;
+  const cols = 11, stallW = s / cols;
+  for (let c = 0; c <= cols; c++) {
+    ctx.beginPath(); ctx.moveTo(c * stallW, s * 0.06); ctx.lineTo(c * stallW, s * 0.40); ctx.stroke(); // top row
+    ctx.beginPath(); ctx.moveTo(c * stallW, s * 0.60); ctx.lineTo(c * stallW, s * 0.94); ctx.stroke(); // bottom row
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 // ---- generation ----
 export function generateCity(seed: number, isTouch: boolean, skipMeshes = false): City {
   void isTouch; // collidable set is identical across devices/tiers (seed-only) — fairness/determinism
@@ -420,14 +463,23 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
   const warp: ZoneWarp = { lo: drawWarp(rng), hi: drawWarp(rng) };
   const zone = (x: number, z: number): Zone => zoneAt(x, z, warp);
 
+  // a landmark shopping mall + huge parking lot in the suburb (placed below; lots here are cleared)
+  const MALL = { x: 235, z: 168, w: 54, d: 36, h: 14, lotZ: 118, lotW: 74, lotD: 48 };
+
   // (2) roads → a segment list. Render uses all of them; placement only needs to dodge the
   // "big" roads (arterials/spokes) since grid lines run between (mid-block) lot centres.
   const roadSegs: RoadSeg[] = [];
+  const trailSegs: RoadSeg[] = []; // park hiking trails (dirt, narrow, rendered separately)
   const bigRoads: RoadSeg[] = [];
   for (let i = 0; i < 6; i++) {                       // 6 radial spokes — the connectivity backbone
-    const a = i * (Math.PI / 3);
-    const seg = { ax: 0, az: 0, bx: Math.cos(a) * (Bd - 6), bz: Math.sin(a) * (Bd - 6), hw: 5 };
+    const a = i * (Math.PI / 3), ex = Math.cos(a), ez = Math.sin(a);
+    const r1 = ZONE.R1_BASE + ZONE.R1_AMP * warpVal(a, warp.hi); // park entry radius for this spoke
+    const seg = { ax: 0, az: 0, bx: ex * r1, bz: ez * r1, hw: 5 }; // ASPHALT road: centre → park edge
     roadSegs.push(seg); bigRoads.push(seg);
+    // a winding hiking TRAIL takes over at the park edge and meanders to the rim (no roads in the park)
+    const before = trailSegs.length;
+    windingRoad(rng, ex * r1, ez * r1, a, 11, 17, 0.85, 2.6, trailSegs);
+    for (let k = before; k < trailSegs.length; k++) bigRoads.push(trailSegs[k]);
   }
   for (let i = 0; i < 3; i++) {                       // 3 winding suburb arterials from the downtown edge out
     const a0 = rng() * TWO_PI;
@@ -454,6 +506,7 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
       if (r0 > density) continue;
       if (Math.hypot(lotCx, lotCz) < CITY.SPAWN_SAFE_R + lotIn) continue;      // keep the start clear
       if (onRoad(lotCx, lotCz, bigRoads, lotIn * 0.3)) continue;               // leave arterials/spokes clear
+      if (lotCx > MALL.x - 42 && lotCx < MALL.x + 42 && lotCz > MALL.lotZ - 28 && lotCz < MALL.z + 22) continue; // mall + its parking lot
       // pick kind by zone
       const kr = rng();
       const kind = pickKind(zn, kr);
@@ -547,17 +600,32 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     push(cx - 27, cz - 8, cx + 27, cz + 8, ObsFlag.PASS_UNDER, 9, Kind.Tunnel);      // bore → carved free
     tunnels.push({ minX: cx - 27, minZ: cz - 8, maxX: cx + 27, maxZ: cz + 8, cx, cz });
   }
-  // billboards lining the radial spokes — 2 SOLID posts you walk between/under a raised sign
-  for (let s = 0; s < 6; s++) {
-    const a = s * (Math.PI / 3), rad = 270 + (s & 1) * 120; // alternate suburb / outer-park radii
+  // a few plain billboards lining the radial spokes — 2 SOLID posts you walk between/under a raised sign
+  for (let s = 0; s < 6; s += 2) {
+    const a = s * (Math.PI / 3), rad = 280;
     const px = -Math.sin(a), pz = Math.cos(a);          // perpendicular to the spoke
     const bx = Math.cos(a) * rad + px * 12, bz = Math.sin(a) * rad + pz * 12; // set beside the road
     if (zone(bx, bz) === Zone.Downtown) continue;       // keep the dense core clear
     const pw = 0.9, ph = 9;
     push(bx + px * -4 - pw / 2, bz + pz * -4 - pw / 2, bx + px * -4 + pw / 2, bz + pz * -4 + pw / 2, ObsFlag.SOLID, ph, Kind.Billboard);
     push(bx + px * 4 - pw / 2, bz + pz * 4 - pw / 2, bx + px * 4 + pw / 2, bz + pz * 4 + pw / 2, ObsFlag.SOLID, ph, Kind.Billboard);
-    billboards.push({ x: bx, z: bz, ang: a, lit: (s & 1) === 0 });
+    billboards.push({ x: bx, z: bz, ang: a, lit: true });
   }
+  // GATEWAY billboards — one big neon sign naming each zone. The follow-cam always looks in a
+  // FIXED world direction (−z), so the signs face +z (width along x) → always readable head-on.
+  const signGates: { x: number; z: number; y: number; text: string; accent: string; w: number; h: number }[] = [];
+  const GATES = [
+    { r: 135, ang: Math.PI / 2, text: 'NEON DOWNTOWN', accent: '#5ef2ff' },
+    { r: 300, ang: Math.PI * 7 / 6, text: 'NEON SUBURB', accent: '#ffd24a' },
+    { r: 505, ang: Math.PI * 11 / 6, text: 'NEON NATIONAL PARK', accent: '#7bf26a' },
+  ];
+  for (const g of GATES) {
+    const gx = Math.cos(g.ang) * g.r, gz = Math.sin(g.ang) * g.r;
+    for (const s of [-9, 9]) push(gx + s - 0.8, gz - 0.8, gx + s + 0.8, gz + 0.8, ObsFlag.SOLID, 12, Kind.Billboard); // posts flank along x
+    signGates.push({ x: gx, z: gz, y: 7.5, text: g.text, accent: g.accent, w: 18, h: 6 });
+  }
+  // the suburb shopping MALL — a big-box landmark (renders via the building merge as a Mall archetype)
+  push(MALL.x - MALL.w / 2, MALL.z - MALL.d / 2, MALL.x + MALL.w / 2, MALL.z + MALL.d / 2, ObsFlag.SOLID, MALL.h, Kind.Mall);
 
   // boundary ring — thin tall barricade walls that resolve out of the fog as the city edge
   const t = 4, wallH = 20;
@@ -588,6 +656,7 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
   // ---- meshes ----
   const meshes: THREE.Object3D[] = [];
   const cosmetic: THREE.Object3D[] = []; // toggled by visual tier
+  const signMeshes: THREE.Mesh[] = []; // gateway zone signs — turned to face the camera each frame
   // per-frame fade state for the hollow-building roofs (built below if there are any)
   let roofRT: {
     fade: Float32Array; attr: THREE.BufferAttribute; alpha: Float32Array;
@@ -784,11 +853,87 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     meshes.push(roads);
   }
 
+  // park hiking trails: narrow dusty dirt paths (lighter + thinner than the asphalt roads)
+  if (!skipMeshes && trailSegs.length > 0) {
+    const quad = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+    const tmat = new THREE.MeshBasicMaterial({ color: 0x3a2f1e }); // dusty trail dirt
+    tmat.polygonOffset = true; tmat.polygonOffsetFactor = -1; tmat.polygonOffsetUnits = -2;
+    const trails = new THREE.InstancedMesh(quad, tmat, trailSegs.length);
+    trails.frustumCulled = false;
+    trails.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    const m = new THREE.Matrix4(), rot = new THREE.Matrix4(), sc = new THREE.Matrix4(), pos = new THREE.Matrix4();
+    for (let i = 0; i < trailSegs.length; i++) {
+      const s = trailSegs[i];
+      const len = Math.hypot(s.bx - s.ax, s.bz - s.az) || 0.001;
+      const ang = Math.atan2(s.bz - s.az, s.bx - s.ax);
+      // overlap each chord a touch so the bends don't gap
+      sc.makeScale(len + 1.5, 1, s.hw * 2);
+      rot.makeRotationY(-ang);
+      pos.makeTranslation((s.ax + s.bx) / 2, 0.03, (s.az + s.bz) / 2);
+      m.multiplyMatrices(pos, rot).multiply(sc);
+      trails.setMatrixAt(i, m);
+    }
+    trails.instanceMatrix.needsUpdate = true;
+    meshes.push(trails);
+  }
+
+  // gateway zone-name signs: merged dark posts + a glowing textured sign quad facing the centre
+  if (!skipMeshes && signGates.length > 0) {
+    const postParts: THREE.BufferGeometry[] = [];
+    const bbt = KIND_TINT[Kind.Billboard];
+    for (const sg of signGates) {
+      for (const s of [-9, 9]) postParts.push(paint(new THREE.BoxGeometry(1.4, 16, 1.4).translate(sg.x + s, 8, sg.z), bbt[0], bbt[1], bbt[2]));
+      const mat = new THREE.MeshBasicMaterial({ map: makeSignTexture(sg.text, sg.accent), toneMapped: false, side: THREE.DoubleSide });
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(sg.w, sg.h), mat);
+      sign.position.set(sg.x, sg.y, sg.z);
+      sign.frustumCulled = false;
+      meshes.push(sign); signMeshes.push(sign); // oriented to face the camera in faceSigns()
+    }
+    const merged = BufferGeometryUtils.mergeGeometries(postParts, false);
+    postParts.forEach(p => p.dispose());
+    const pmesh = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0x141210, flatShading: true }));
+    pmesh.frustumCulled = false;
+    meshes.push(pmesh);
+  }
+
+  // the mall's huge parking lot — a paved quad with painted stalls + a scatter of parked cars
+  if (!skipMeshes) {
+    const lot = new THREE.Mesh(new THREE.PlaneGeometry(MALL.lotW, MALL.lotD).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ map: makeParkingTexture() }));
+    (lot.material as THREE.MeshBasicMaterial).polygonOffset = true;
+    (lot.material as THREE.MeshBasicMaterial).polygonOffsetFactor = -1;
+    (lot.material as THREE.MeshBasicMaterial).polygonOffsetUnits = -2;
+    lot.position.set(MALL.x, 0.025, MALL.lotZ);
+    lot.frustumCulled = false;
+    meshes.push(lot);
+    const carParts: THREE.BufferGeometry[] = [];
+    const carCols = [[0.5, 0.13, 0.13], [0.12, 0.3, 0.5], [0.5, 0.46, 0.13], [0.32, 0.34, 0.38], [0.42, 0.42, 0.45], [0.15, 0.42, 0.32]];
+    const stalls = [[-27, 9], [-21, 9], [-15, 9], [-9, 9], [9, 9], [15, 9], [21, 9], [27, 9], [-27, -9], [-21, -9], [-9, -9], [-3, -9], [9, -9], [21, -9]];
+    let ci = 0;
+    for (const [ox, oz] of stalls) {
+      if (((ox * 7 + oz * 3) & 3) === 0) continue; // some empty stalls
+      const c = carCols[ci++ % carCols.length];
+      const bx = MALL.x + ox, bz = MALL.lotZ + oz;
+      carParts.push(paint(new THREE.BoxGeometry(2.0, 1.0, 3.7).translate(bx, 0.6, bz), c[0], c[1], c[2]));      // body
+      carParts.push(paint(new THREE.BoxGeometry(1.7, 0.7, 1.9).translate(bx, 1.4, bz), c[0] * 0.8, c[1] * 0.8, c[2] * 0.8)); // cabin
+    }
+    if (carParts.length > 0) {
+      const cmerged = BufferGeometryUtils.mergeGeometries(carParts, false);
+      carParts.forEach(p => p.dispose());
+      const cmesh = new THREE.Mesh(cmerged, new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0x0a0a0c, flatShading: true }));
+      cmesh.frustumCulled = false;
+      meshes.push(cmesh);
+    }
+  }
+
   void H; // (reserved for future bounds use)
 
   const city: City = {
     obstacles, blockGrid, drops, meshes, seed,
     zoneAt(x: number, z: number): Zone { return zoneAt(x, z, warp); },
+    faceSigns(cx: number, cy: number, cz: number): void {
+      for (let i = 0; i < signMeshes.length; i++) signMeshes[i].lookAt(cx, cy, cz); // always readable, any approach
+    },
     setVisualTier(tier: number): void {
       // collidable rects are identical across tiers; only cosmetics toggle
       const show = tier <= 1;

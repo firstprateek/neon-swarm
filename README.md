@@ -40,8 +40,10 @@ All gameplay keys are **remappable** in Settings. Collect green XP gems, pick an
 The arena is a finite, collidable post-apocalyptic city, generated from the run's seed (so a shared seed gives the **identical** map). It's split into three concentric zones, each with its own buildings and roads:
 
 - **Downtown** (centre, where you spawn) — a tower skyline on a tight road **grid**.
-- **Suburb** (mid ring) — houses and the odd big-box mall, threaded by **winding arterials**.
-- **National park** (outer rim) — sparse ruins among **lakes, mountains, and pine woods**, the only place still wrapped in eerie haze (the rest of the city is clear).
+- **Suburb** (mid ring) — houses, a landmark **shopping mall with a huge parking lot**, threaded by **winding arterials**.
+- **National park** (outer rim) — sparse ruins among **lakes, mountains, and pine woods**, laced with **winding dirt hiking trails** (not roads) and still wrapped in eerie haze (the rest of the city is clear).
+
+A glowing **gateway sign** announces each zone — **NEON DOWNTOWN**, **NEON SUBURB**, **NEON NATIONAL PARK** — turning to face you as you pass.
 
 Six radial spokes tie the zones together. Buildings, terrain, and the boundary wall all block you *and* the horde, so enemies path around them — use them as cover. **~Half of the intact buildings are enterable** (walk through the doorway), each capped by a **see-through roof** — a faint shell from outside that fades nearly clear as you step in, the way a top-down game reveals an interior. Inside sits a **supply cache** with a tell-tale shape: a **medic kit** (+100 HP), a **rocket** (+10 missiles), or a **bomb** (a nuke). And there are structures to read: **billboards** you walk under, **bridges** you cross over the lakes, and **tunnels** you walk through — a tunnel's roof fades to transparent while you're inside it.
 

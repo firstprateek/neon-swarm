@@ -996,6 +996,7 @@ async function start() {
         blast.update(dt);
         ambient.update(dt, camera.position.x, camera.position.z, i / 60);
         city?.updateTunnels(player.position.x, player.position.z, dt); // mirror the rAF loop (tunnel + roof fades)
+        city?.faceSigns(camera.position.x, camera.position.y, camera.position.z);
         hud.tick(dt);
         if (touch) { if (canAct()) touch.show(); else touch.hide(); }
       }
@@ -1212,6 +1213,7 @@ async function start() {
     blast.update(dt); // real-time so the nuke FX plays out through hit-stop / level-up
     ambient.update(dt, camera.position.x, camera.position.z, now / 1000); // the dead world keeps breathing
     city?.updateTunnels(player.position.x, player.position.z, dt); // fade a tunnel roof while you're inside it (real dt)
+    city?.faceSigns(camera.position.x, camera.position.y, camera.position.z); // gateway signs turn to face the camera
     hud.tick(dt);
     if (touch) { if (canAct()) touch.show(); else touch.hide(); } // show only during active play
 
