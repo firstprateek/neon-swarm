@@ -149,10 +149,13 @@ export class Swarm {
 
   spawn(typeIdx: number, x: number, z: number, hpOverride?: number): void {
     if (this.count >= this.max) return;
-    // never spawn a zombie sealed inside a building — nudge it to walkable ground.
-    // Deterministic (no srand) so the move is identical for a given seed/city.
-    if (this.blockGrid && cellBlocked(this.blockGrid, x, z)) {
-      const f = nearestFree(this.blockGrid, x, z); x = f.x; z = f.z;
+    if (this.blockGrid) {
+      // keep spawns inside the boundary wall (never in the unreachable dead zone outside)
+      const b = this.blockGrid.bound - 1;
+      if (x < -b) x = -b; else if (x > b) x = b;
+      if (z < -b) z = -b; else if (z > b) z = b;
+      // and never sealed inside a building — nudge to walkable ground (deterministic, no srand)
+      if (cellBlocked(this.blockGrid, x, z)) { const f = nearestFree(this.blockGrid, x, z); x = f.x; z = f.z; }
     }
     const i = this.count++;
     const t = ENEMY_TYPES[typeIdx];

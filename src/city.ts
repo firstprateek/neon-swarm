@@ -36,6 +36,7 @@ export interface ObstacleSoA {
 
 export interface BlockGrid {
   cell: number; invCell: number; dim: number; half: number;
+  bound: number;       // playable half-extent (inside the boundary wall) — spawns clamp to this
   blocked: Uint8Array; // dim*dim, 1 = solid
 }
 
@@ -139,6 +140,14 @@ function bake(g: BlockGrid, s: ObstacleSoA): void {
     const cx1 = cl(((s.maxX[i] + half) * invCell) | 0);
     const cz1 = cl(((s.maxZ[i] + half) * invCell) | 0);
     for (let cz = cz0; cz <= cz1; cz++) blocked.fill(1, cz * dim + cx0, cz * dim + cx1 + 1);
+  }
+  // seal everything AT or OUTSIDE the boundary (wall + dead zone) so nothing — neither
+  // the player, a spawn, nor a relocated spawn — can ever occupy the outside ring.
+  const lo = cl(((-WORLD.BOUND + half) * invCell) | 0); // 40
+  const hi = cl(((WORLD.BOUND + half) * invCell) | 0);   // 1160
+  for (let cz = 0; cz < dim; cz++) {
+    if (cz <= lo || cz >= hi) blocked.fill(1, cz * dim, cz * dim + dim);
+    else { blocked.fill(1, cz * dim, cz * dim + lo + 1); blocked.fill(1, cz * dim + hi, cz * dim + dim); }
   }
 }
 
@@ -255,8 +264,8 @@ export function generateCity(seed: number, isTouch: boolean): City {
     }
   }
 
-  // boundary ring — tall barricade walls that resolve out of the fog as the city edge
-  const Bd = WORLD.BOUND, t = 10, wallH = 22;
+  // boundary ring — thin tall barricade walls that resolve out of the fog as the city edge
+  const Bd = WORLD.BOUND, t = 4, wallH = 20;
   push(-Bd - t, -Bd - t, Bd + t, -Bd, ObsFlag.SOLID, wallH, Kind.Boundary); // south
   push(-Bd - t, Bd, Bd + t, Bd + t, ObsFlag.SOLID, wallH, Kind.Boundary);   // north
   push(-Bd - t, -Bd, -Bd, Bd, ObsFlag.SOLID, wallH, Kind.Boundary);         // west
@@ -273,7 +282,7 @@ export function generateCity(seed: number, isTouch: boolean): City {
 
   // bake the collision bitmask
   const blockGrid: BlockGrid = {
-    cell: WORLD.CELL, invCell: INV_CELL, dim: DIM, half: WORLD.HALF,
+    cell: WORLD.CELL, invCell: INV_CELL, dim: DIM, half: WORLD.HALF, bound: WORLD.BOUND,
     blocked: new Uint8Array(DIM * DIM),
   };
   bake(blockGrid, obstacles);

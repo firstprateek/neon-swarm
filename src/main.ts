@@ -147,7 +147,7 @@ async function start() {
     screenUV.y.smoothstep(0.35, 1.0),
   );
   scene.background = null;
-  const FOG_BASE = 0.026; // density at zoom 1; scaled by 1/zoom each frame so zoom-out stays readable
+  const FOG_BASE = 0.0065; // light haze (was 0.026); 1/zoom thins it further as you zoom out
   scene.fog = new THREE.FogExp2(SKY_HORIZON, FOG_BASE);
 
   const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 300);
@@ -1064,11 +1064,11 @@ async function start() {
     camera.position.x += (player.position.x - camera.position.x) * zlerp;
     camera.position.y += (26 * settings.zoom - camera.position.y) * zlerp;
     camera.position.z += (player.position.z + 15 * settings.zoom - camera.position.z) * zlerp;
-    // fog is camera-distance based, so dollying out would over-fog everything (incl. the
-    // player). Scale density by 1/zoom to hold the haze at the player constant, THEN cut it
-    // by up to 75% as you zoom OUT (0 at default, −75% at max) so the player stays clear.
-    const zoomOut = Math.min(1, Math.max(0, (settings.zoom - 1) / (ZOOM_MAX - 1)));
-    (scene.fog as THREE.FogExp2).density = (FOG_BASE / settings.zoom) * (1 - 0.75 * zoomOut);
+    // fog is camera-distance based; scale density by 1/zoom so it thins as you zoom
+    // out and the player stays clear. FOG_BASE is light, so desktop (zoom 1) is now
+    // ~75% less hazy than before, while mobile (max zoom) lands at the same value it
+    // already had — exactly the wanted reduction without over-clearing mobile.
+    (scene.fog as THREE.FogExp2).density = FOG_BASE / settings.zoom;
     // transient, zero-mean screen-shake offset (re-centered by the lerp next frame)
     if (shake > 0.001) {
       camera.position.x += (Math.random() * 2 - 1) * shake;

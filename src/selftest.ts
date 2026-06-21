@@ -155,7 +155,7 @@ function run(): void {
     check('city: spawn-safe disc clear', safe);
 
     // 6. resolveMove: slides along a wall, no-ops in the open
-    const wall: BlockGrid = { cell: WORLD.CELL, invCell: 1 / WORLD.CELL, dim: DIM, half: WORLD.HALF, blocked: new Uint8Array(DIM * DIM) };
+    const wall: BlockGrid = { cell: WORLD.CELL, invCell: 1 / WORLD.CELL, dim: DIM, half: WORLD.HALF, bound: WORLD.BOUND, blocked: new Uint8Array(DIM * DIM) };
     const setB = (x: number, z: number) => { const cx = ((x + wall.half) / wall.cell) | 0, cz = ((z + wall.half) / wall.cell) | 0; wall.blocked[cz * wall.dim + cx] = 1; };
     for (let z = -10; z <= 10; z += 0.5) setB(5, z); // vertical wall column at x≈5
     const slid = resolveMove(wall, 3, 0, 7, 0, 0.8); // push east into the wall
@@ -179,7 +179,7 @@ function run(): void {
     check('city: free space connected (≥85% reachable, no sealed pockets)', reach >= 0.85 * freeInside, `${reach}/${freeInside}`);
 
     // 9. THE PERF+CORRECTNESS GATE: a dense pack cannot tunnel a 1-cell-thick wall
-    const tg: BlockGrid = { cell: WORLD.CELL, invCell: 1 / WORLD.CELL, dim: DIM, half: WORLD.HALF, blocked: new Uint8Array(DIM * DIM) };
+    const tg: BlockGrid = { cell: WORLD.CELL, invCell: 1 / WORLD.CELL, dim: DIM, half: WORLD.HALF, bound: WORLD.BOUND, blocked: new Uint8Array(DIM * DIM) };
     const setT = (x: number, z: number) => { const cx = ((x + tg.half) / tg.cell) | 0, cz = ((z + tg.half) / tg.cell) | 0; tg.blocked[cz * tg.dim + cx] = 1; };
     for (let z = -30; z <= 30; z += 0.5) setT(0.5, z); // 1-cell wall at x∈[0,1)
     const scene = new THREE.Scene();
