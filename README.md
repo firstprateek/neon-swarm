@@ -89,7 +89,7 @@ The plan is a Wordle-style viral loop with global leaderboards, built in phases:
 - ✅ **Phase 0 — Determinism.** Seeded sim, proven byte-identical replays.
 - ✅ **Phase 1 — Share card + challenge links.** Zero-backend brag card and `?seed` "beat my run" links.
 - ✅ **Phase 2a — Daily Challenge.** One global seed/day with a local best board.
-- ⏳ **Phase 2b — Global leaderboard + telemetry.** Self-hosted backend (PocketBase on a Mac Mini behind a Cloudflare Tunnel) with statistical anti-cheat and privacy-first, cookieless analytics. The post-game **feedback** widget already captures submissions and queues them locally to flush here once it's live. Full design: [`docs/BACKEND.md`](docs/BACKEND.md).
+- 🛠️ **Phase 2b — Global leaderboard + telemetry (code ready, flag OFF).** The client SDK (`src/telemetry.ts`, `src/leaderboard.ts`) and the self-hosted server ([`server/`](server/) — one PocketBase on a Mac Mini behind a Cloudflare Tunnel, statistical anti-cheat, cookieless salted-hash anonymity) are **built and feature-flagged off** — every endpoint is `null`, so the live game is unchanged (proven by tests: zero network while off). Flip one config to go live; the game-over screen then shows your **global rank** + streak + rival. Design: [`docs/BACKEND.md`](docs/BACKEND.md); go-live steps: [`server/docs/go-live-checklist.md`](server/docs/go-live-checklist.md).
 - ⏳ **Phase 3 — Last Swarm Standing.** Real-time multiplayer (only a light player ribbon is networked; each client simulates its own horde from the shared seed).
 
 ## Ideas for later

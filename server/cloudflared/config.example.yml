@@ -1,0 +1,19 @@
+# Cloudflare named-tunnel ingress. PocketBase stays bound to 127.0.0.1 — only this
+# tunnel is public, so the origin is never directly reachable. Copy to ~/.cloudflared/config.yml.
+tunnel: <TUNNEL-UUID>
+credentials-file: /Users/you/.cloudflared/<TUNNEL-UUID>.json
+
+ingress:
+  # the game calls https://api.<your-host> for /score, /leaderboard, /t
+  - hostname: api.your-host.example
+    service: http://127.0.0.1:8090
+  - service: http_status:404
+
+# Shared-secret header (x-tunnel-secret): cloudflared can't add request headers here,
+# so add it with a Cloudflare "Transform Rules -> Modify Request Header" on the route
+# (Set static: x-tunnel-secret = <your TUNNEL_SECRET>). That guarantees requests came
+# through Cloudflare. See docs/cloudflare-tunnel.md.
+#
+# Edge cache (free plan): a Cache Rule on `api.<host>/leaderboard/*` honoring origin
+# Cache-Control (max-age=20) absorbs a viral spike on the read path. WAF on; add a
+# rate-limit rule if a free slot is available.

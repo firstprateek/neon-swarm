@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Keep PocketBase running. Edit the path, then:
+     cp com.neonswarm.pocketbase.plist ~/Library/LaunchAgents/
+     launchctl load ~/Library/LaunchAgents/com.neonswarm.pocketbase.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.neonswarm.pocketbase</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/you/neon-swarm/server/scripts/run.sh</string>
+  </array>
+  <key>KeepAlive</key><true/>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>/Users/you/neon-swarm/server/pb/pb.out.log</string>
+  <key>StandardErrorPath</key><string>/Users/you/neon-swarm/server/pb/pb.err.log</string>
+</dict>
+</plist>

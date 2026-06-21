@@ -1,0 +1,7 @@
+# the PocketBase binary (downloaded by scripts/setup.sh) and its data/logs
+pb/pocketbase
+pb/pb_data/
+pb/*.log
+.pbver
+# secrets
+.env

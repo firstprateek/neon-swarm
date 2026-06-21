@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Rotate the anon salt at 00:00 UTC. NOTE: launchd StartCalendarInterval is LOCAL
+     time — set Hour to whatever local hour equals 00:00 UTC for your timezone (or run
+     hourly and let salt-rotate.sh no-op intra-day). After editing the path:
+     cp com.neonswarm.salt-rotate.plist ~/Library/LaunchAgents/
+     launchctl load ~/Library/LaunchAgents/com.neonswarm.salt-rotate.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.neonswarm.salt-rotate</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/you/neon-swarm/server/scripts/salt-rotate.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>0</integer><key>Minute</key><integer>0</integer></dict>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>
