@@ -624,7 +624,12 @@ function run(): void {
     g.build(sw.posX, sw.posZ, sw.count, 0, 0);
     sw.update(0.05, 0, 0, 0, g); // age 0.05 of 0.25 -> ~20%
     check('telegraph: scales in (small but growing)', sclOf() > 0 && sclOf() < sw.baseScale[0], `scale=${sclOf().toFixed(3)} base=${sw.baseScale[0]}`);
-    for (let t = 0; t < 10; t++) { g.build(sw.posX, sw.posZ, sw.count, 0, 0); sw.update(0.05, 0, 0, 0, g); }
+    // Grow-in finishes at GROW_T (0.25s = 5 frames of dt 0.05); step a couple past
+    // that to confirm it holds at full scale. Don't over-step: this lone enemy chases
+    // the player at (0,0), and once it marches right up to the origin the chase's
+    // direction-normalization epsilon (the +1e-6 in d) shaves ~1e-3 off the measured
+    // rotated column — a measurement artifact, not a real scale, that made this flaky.
+    for (let t = 0; t < 5; t++) { g.build(sw.posX, sw.posZ, sw.count, 0, 0); sw.update(0.05, 0, 0, 0, g); }
     check('telegraph: reaches full scale after grow-in', Math.abs(sclOf() - sw.baseScale[0]) < 1e-4, `scale=${sclOf()} base=${sw.baseScale[0]}`);
   }
 
