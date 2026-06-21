@@ -35,6 +35,16 @@ All gameplay keys are **remappable** in Settings. Collect green XP gems, pick an
 
 **On mobile/touch** (auto-detected): a floating analog joystick on the bottom-right moves you (push further = faster), and ability buttons on the bottom-left fire **nuke / missile / dash** (plus a **FIRE** button when auto-fire is off). A top-right ⚙ opens pause/settings and `+`/`−` buttons zoom. Menus stack vertically and tap-outside-to-close. Add `?touch` to force the on-screen controls on a desktop browser.
 
+## The world
+
+The arena is a finite, collidable post-apocalyptic city, generated from the run's seed (so a shared seed gives the **identical** map). It's split into three concentric zones, each with its own buildings and roads:
+
+- **Downtown** (centre, where you spawn) — a tower skyline on a tight road **grid**.
+- **Suburb** (mid ring) — houses and the odd big-box mall, threaded by **winding arterials**.
+- **National park** (outer rim) — sparse ruins among **lakes, mountains, and pine woods**.
+
+Six radial spokes tie the zones together. Buildings, terrain, and the boundary wall all block you *and* the horde, so enemies path around them — use them as cover. **~Half of the intact buildings are enterable** (walk through the doorway) and hold a **supply cache**: a health pack (+100 HP), a missile pack (+10), or a nuke. And there are structures to read: **billboards** you walk under, **bridges** you cross over the lakes, and **tunnels** you walk through — a tunnel's roof fades to transparent while you're inside it.
+
 ## Control modes
 
 Pick how much the game helps you aim and fire — set a preset (or flip the toggles individually) in **Settings**:
@@ -83,7 +93,7 @@ Other:
 
 - **Cheat codes** — just type the word during a run: `god`, `guns`, `tank`, `boss`, `horde`, `rich`, `levelup`.
 - `window.__spawnTest(n)` in the console — benchmark hook: spawns `n` enemies around the player with effectively infinite HP (a stress test, not a fair fight). 15,000 enemies hold 120 FPS on an Apple Silicon Mac.
-- **`/test.html`** — in-browser self-test suite (207 tests) importing the real modules; results land on `window.__testResults`.
+- **`/test.html`** — in-browser self-test suite (245 tests) importing the real modules; results land on `window.__testResults`.
 
 ## Roadmap
 
