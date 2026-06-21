@@ -195,10 +195,11 @@ function run(): void {
     const hc = generateCity(424242, false, true);
     const ob = hc.obstacles;
     let hollowN = 0, eligible = 0;
+    // only intact building kinds are hollow-eligible (House/Hospital/Cinema/Mall)
+    const hollowKind = (k: number) => k === 0 || k === 1 || k === 2 || k === 7;
     for (let i = 0; i < ob.count; i++) {
-      if (ob.kind[i] === 5) continue; // skip boundary
       const fw = ob.maxX[i] - ob.minX[i], fd = ob.maxZ[i] - ob.minZ[i];
-      if (fw >= 16 && fd >= 16) eligible++;
+      if (hollowKind(ob.kind[i]) && fw >= 16 && fd >= 16) eligible++;
       if (ob.hollow[i]) hollowN++;
     }
     check('city: a meaningful share of buildings are hollow', hollowN > 0 && hollowN <= eligible, `${hollowN}/${eligible}`);
@@ -206,6 +207,24 @@ function run(): void {
     check('city: one drop per hollow building', hc.drops.count === hollowN, `${hc.drops.count} vs ${hollowN}`);
     let dvalid = true; for (let i = 0; i < hc.drops.count; i++) if (hc.drops.type[i] > 2) dvalid = false;
     check('city: drop types are valid (0..2)', dvalid);
+
+    // ---- zones (downtown / suburb / park) ----
+    const zc1 = generateCity(777, false, true);
+    const zc2 = generateCity(777, false, true);
+    let zsame = true; const seen = [0, 0, 0];
+    for (let ai = 0; ai < 360; ai += 17) {
+      const a = ai * Math.PI / 180;
+      for (let rr = 40; rr < 540; rr += 50) {
+        const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+        const za = zc1.zoneAt(x, z);
+        if (za !== zc2.zoneAt(x, z)) zsame = false;
+        seen[za] = 1;
+      }
+    }
+    check('city: zone field deterministic for a seed', zsame);
+    check('city: all three zones present (downtown/suburb/park)', seen[0] === 1 && seen[1] === 1 && seen[2] === 1, `${seen.join(',')}`);
+    check('city: origin is downtown (spawn-safe)', zc1.zoneAt(0, 0) === 0);
+    check('city: far rim is park', zc1.zoneAt(540, 0) === 2 && zc1.zoneAt(0, 540) === 2);
   }
 
   // ---------- Bullets ----------

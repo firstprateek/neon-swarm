@@ -23,7 +23,13 @@ export const INV_CELL = 1 / WORLD.CELL;
 export const DIM = (WORLD.SIZE / WORLD.CELL) | 0; // 1200
 
 export const enum ObsFlag { SOLID = 1, PASS_UNDER = 2, TUNNEL = 4 }
-export const enum Kind { House = 0, Hospital = 1, Cinema = 2, Ruin = 3, Rubble = 4, Boundary = 5 }
+export const enum Kind {
+  House = 0, Hospital = 1, Cinema = 2, Ruin = 3, Rubble = 4, Boundary = 5,
+  Tower = 6, Mall = 7,                              // building archetypes
+  Mountain = 8, TreeTrunk = 9, Water = 10, Snag = 11, // terrain (Water is SOLID, render-routed by kind)
+  Billboard = 12, Bridge = 13, Tunnel = 14,         // structures
+}
+export const enum Zone { Downtown = 0, Suburb = 1, Park = 2 }
 
 export interface ObstacleSoA {
   count: number;
@@ -53,6 +59,7 @@ export interface City {
   drops: DropList;
   meshes: THREE.Object3D[];
   seed: number;
+  zoneAt(x: number, z: number): Zone; // downtown / suburb / park at a world point
   setVisualTier(tier: number): void;
   updateTunnels(px: number, pz: number, dt: number): void;
 }
@@ -81,6 +88,15 @@ const KIND_TINT: [number, number, number][] = [
   [0.26, 0.22, 0.17],  // Ruin — charred brown
   [0.19, 0.17, 0.15],  // Rubble — dark debris
   [0.22, 0.24, 0.28],  // Boundary — cold barricade
+  [0.30, 0.33, 0.40],  // Tower — glassy grey-blue
+  [0.36, 0.31, 0.22],  // Mall — tan retail block
+  [0.20, 0.21, 0.19],  // Mountain — grey-green rock
+  [0.18, 0.14, 0.10],  // TreeTrunk — dark bark
+  [0.05, 0.12, 0.15],  // Water — dark teal
+  [0.13, 0.11, 0.09],  // Snag — charred dead wood
+  [0.20, 0.21, 0.24],  // Billboard — grey frame
+  [0.24, 0.21, 0.18],  // Bridge — weathered deck
+  [0.17, 0.16, 0.15],  // Tunnel — dark concrete
 ];
 
 // ---- collision queries ----
@@ -238,6 +254,24 @@ function archetypeParts(kind: Kind, w: number, h: number, d: number, cx: number,
     add(new THREE.BoxGeometry(w * 0.92, fragH, d * 0.92).translate(cx, fragH / 2, cz));     // standing remnant
     const tiltH = h * 0.5, lean = (rng() - 0.5) * 0.5;
     add(new THREE.BoxGeometry(w * 0.42, tiltH, d * 0.42).rotateZ(lean).translate(cx + w * 0.28, tiltH * 0.42, cz - d * 0.18), 0.6); // collapsed slab
+  } else if (kind === Kind.Tower) {
+    const baseH = h * 0.55;
+    add(new THREE.BoxGeometry(w, baseH, d).translate(cx, baseH / 2, cz));                   // base slab
+    const setH = h * 0.30;
+    add(new THREE.BoxGeometry(w * 0.78, setH, d * 0.78).translate(cx, baseH + setH / 2, cz), 1.05); // setback
+    const crownH = h * 0.15;
+    add(new THREE.BoxGeometry(w * 0.55, crownH, d * 0.55).translate(cx, baseH + setH + crownH / 2, cz), 1.12); // crown
+    const antH = 3 + rng() * 5;
+    add(new THREE.BoxGeometry(0.6, antH, 0.6).translate(cx, h + antH / 2, cz), 1.2);        // antenna mast
+  } else if (kind === Kind.Mall) {
+    add(new THREE.BoxGeometry(w, h, d).translate(cx, h / 2, cz));                           // big-box retail body
+    const face = rng() < 0.5 ? 1 : -1;
+    add(new THREE.BoxGeometry(w * 0.5, h * 0.32, d * 0.16).translate(cx, h * 0.16, cz + face * d * 0.5), 1.1); // entrance canopy
+    const rn = 2 + ((rng() * 3) | 0);
+    for (let s = 0; s < rn; s++) {
+      const rw = w * (0.1 + rng() * 0.12), rd = d * (0.1 + rng() * 0.12), rh = h * (0.2 + rng() * 0.3);
+      add(new THREE.BoxGeometry(rw, rh, rd).translate(cx + (rng() - 0.5) * w * 0.6, h + rh / 2, cz + (rng() - 0.5) * d * 0.6), 0.9); // rooftop HVAC
+    }
   } else if (kind === Kind.Boundary) {
     add(new THREE.BoxGeometry(w, h, d).translate(cx, h / 2, cz));                           // barricade wall
   } else { // Rubble — scatter of low chunks
@@ -278,6 +312,69 @@ function hollowParts(h: number, w: number, d: number, cx: number, cz: number, ti
   return parts;
 }
 
+// ---- zones: 3 concentric, angularly-warped rings (Downtown → Suburb → Park) ----
+interface WarpCoeffs { a1: number; a2: number; a3: number; p1: number; p2: number; p3: number; }
+interface ZoneWarp { lo: WarpCoeffs; hi: WarpCoeffs; }
+const ZONE = { R0_BASE: 200, R0_AMP: 34, R1_BASE: 400, R1_AMP: 52 } as const;
+
+const TWO_PI = Math.PI * 2;
+function warpVal(th: number, c: WarpCoeffs): number {
+  return c.a1 * Math.sin(th + c.p1) + c.a2 * Math.sin(2 * th + c.p2) + c.a3 * Math.sin(3 * th + c.p3);
+}
+function drawWarp(rng: () => number): WarpCoeffs {
+  // amplitudes sum < ~1.1 so the ring radii stay well-ordered & inside the world
+  return { a1: rng() * 0.6, a2: rng() * 0.3, a3: rng() * 0.2, p1: rng() * TWO_PI, p2: rng() * TWO_PI, p3: rng() * TWO_PI };
+}
+/** O(1), allocation-free zone classification. Origin (d<1) is always Downtown → spawn-safe. */
+function zoneAt(x: number, z: number, w: ZoneWarp): Zone {
+  const dd = Math.sqrt(x * x + z * z);
+  if (dd < 1) return Zone.Downtown;
+  const th = Math.atan2(z, x);
+  if (dd < ZONE.R0_BASE + ZONE.R0_AMP * warpVal(th, w.lo)) return Zone.Downtown;
+  if (dd < ZONE.R1_BASE + ZONE.R1_AMP * warpVal(th, w.hi)) return Zone.Suburb;
+  return Zone.Park;
+}
+
+// ---- roads: a segment list, rendered as oriented quads & tested for building placement ----
+interface RoadSeg { ax: number; az: number; bx: number; bz: number; hw: number; }
+/** distance from a point to a segment (for "is this lot on a road?" tests) */
+function distToSeg(px: number, pz: number, s: RoadSeg): number {
+  const dx = s.bx - s.ax, dz = s.bz - s.az;
+  const l2 = dx * dx + dz * dz || 1e-6;
+  let t = ((px - s.ax) * dx + (pz - s.az) * dz) / l2;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const qx = s.ax + t * dx, qz = s.az + t * dz;
+  return Math.hypot(px - qx, pz - qz);
+}
+function onRoad(px: number, pz: number, roads: RoadSeg[], margin: number): boolean {
+  for (let i = 0; i < roads.length; i++) if (distToSeg(px, pz, roads[i]) < roads[i].hw + margin) return true;
+  return false;
+}
+/** suburb/park winding road: fixed step count (stream-stable), turned by one rng per step, kept in bounds */
+function windingRoad(rng: () => number, sx: number, sz: number, heading0: number, steps: number, step: number, turn: number, hw: number, out: RoadSeg[]): void {
+  let x = sx, z = sz, heading = heading0;
+  for (let k = 0; k < steps; k++) {
+    heading += (rng() - 0.5) * turn;                 // exactly one roll per step → constant count
+    let nx = x + Math.cos(heading) * step, nz = z + Math.sin(heading) * step;
+    if (Math.hypot(nx, nz) > WORLD.BOUND - 24) {     // bounce back inward (no extra roll)
+      heading += Math.PI * 0.55;
+      nx = x + Math.cos(heading) * step; nz = z + Math.sin(heading) * step;
+    }
+    out.push({ ax: x, az: z, bx: nx, bz: nz, hw });
+    x = nx; z = nz;
+  }
+}
+/** zone-aware kind pick (CDF per zone); returns a building Kind */
+function pickKind(zone: Zone, kr: number): Kind {
+  if (zone === Zone.Downtown) {            // skyline: towers dominate
+    return kr < 0.68 ? Kind.Tower : kr < 0.80 ? Kind.Hospital : kr < 0.91 ? Kind.Cinema : Kind.Ruin;
+  }
+  if (zone === Zone.Suburb) {              // homes + the odd big-box mall
+    return kr < 0.70 ? Kind.House : kr < 0.82 ? Kind.Mall : kr < 0.91 ? Kind.Ruin : Kind.Rubble;
+  }
+  return kr < 0.50 ? Kind.Rubble : kr < 0.80 ? Kind.Ruin : Kind.House; // park: ruined & sparse
+}
+
 // ---- generation ----
 export function generateCity(seed: number, isTouch: boolean, skipMeshes = false): City {
   void isTouch; // collidable set is identical across devices/tiers (seed-only) — fairness/determinism
@@ -296,34 +393,67 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
   const lotIn = (B - road); // usable lot span
   const grid = Math.floor((WORLD.SIZE - 40) / B); // leave a margin inside the boundary ring
   const start = -((grid * B) / 2);
+  const Bd = WORLD.BOUND;
 
-  // buildings, lot by lot in fixed row-major order (deterministic)
+  // (1) zone warp coeffs — the FIRST stream consumers, so zoneAt is fixed before anything places
+  const warp: ZoneWarp = { lo: drawWarp(rng), hi: drawWarp(rng) };
+  const zone = (x: number, z: number): Zone => zoneAt(x, z, warp);
+
+  // (2) roads → a segment list. Render uses all of them; placement only needs to dodge the
+  // "big" roads (arterials/spokes) since grid lines run between (mid-block) lot centres.
+  const roadSegs: RoadSeg[] = [];
+  const bigRoads: RoadSeg[] = [];
+  for (let i = 0; i < 6; i++) {                       // 6 radial spokes — the connectivity backbone
+    const a = i * (Math.PI / 3);
+    const seg = { ax: 0, az: 0, bx: Math.cos(a) * (Bd - 6), bz: Math.sin(a) * (Bd - 6), hw: 5 };
+    roadSegs.push(seg); bigRoads.push(seg);
+  }
+  for (let i = 0; i < 3; i++) {                       // 3 winding suburb arterials from the downtown edge out
+    const a0 = rng() * TWO_PI;
+    const before = roadSegs.length;
+    windingRoad(rng, Math.cos(a0) * ZONE.R0_BASE, Math.sin(a0) * ZONE.R0_BASE, a0, 22, 24, 0.7, 4.5, roadSegs);
+    for (let k = before; k < roadSegs.length; k++) bigRoads.push(roadSegs[k]);
+  }
+  const Rd = ZONE.R0_BASE - 8;                        // downtown grid, clipped to a disc (chord per line)
+  for (let p = -Rd; p <= Rd + 0.001; p += B) {
+    const ext = Math.sqrt(Math.max(0, Rd * Rd - p * p));
+    if (ext < 6) continue;
+    roadSegs.push({ ax: p, az: -ext, bx: p, bz: ext, hw: road / 2 });
+    roadSegs.push({ ax: -ext, az: p, bx: ext, bz: p, hw: road / 2 });
+  }
+
+  // (3) buildings, lot by lot in fixed row-major order (deterministic), zone-aware
   for (let gz = 0; gz < grid; gz++) {
     for (let gx = 0; gx < grid; gx++) {
       const lotCx = start + gx * B + B / 2;
       const lotCz = start + gz * B + B / 2;
+      const zn = zone(lotCx, lotCz);
+      const density = zn === Zone.Downtown ? 0.62 : zn === Zone.Suburb ? 0.34 : 0.12;
       const r0 = rng(); // one roll per lot regardless of outcome → stream length is layout-stable
-      if (r0 > CITY.DENSITY) continue;
-      if (Math.hypot(lotCx, lotCz) < CITY.SPAWN_SAFE_R + lotIn) continue; // keep the start clear
-      // pick kind
+      if (r0 > density) continue;
+      if (Math.hypot(lotCx, lotCz) < CITY.SPAWN_SAFE_R + lotIn) continue;      // keep the start clear
+      if (onRoad(lotCx, lotCz, bigRoads, lotIn * 0.3)) continue;               // leave arterials/spokes clear
+      // pick kind by zone
       const kr = rng();
-      let kind = Kind.House;
-      for (let k = 0; k < CITY.KIND_CDF.length; k++) { if (kr <= CITY.KIND_CDF[k]) { kind = k as Kind; break; } }
+      const kind = pickKind(zn, kr);
       // footprint within the lot (jittered, never spilling onto the road)
       const fw = lotIn * (0.55 + rng() * 0.4);
       const fd = lotIn * (0.55 + rng() * 0.4);
       const jx = (rng() - 0.5) * (lotIn - fw) * 0.6;
       const jz = (rng() - 0.5) * (lotIn - fd) * 0.6;
       const cx = lotCx + jx, cz = lotCz + jz;
-      // height by kind: hospitals tall, cinemas mid+wide, houses low, ruins broken
+      // height by kind: towers tower, hospitals tall, malls wide+low, houses low, ruins broken
       let height = 6;
-      if (kind === Kind.Hospital) height = 16 + rng() * 12;
+      if (kind === Kind.Tower) height = 16 + rng() * 20;         // tallest, but readable from the angled cam
+      else if (kind === Kind.Hospital) height = 14 + rng() * 8;
+      else if (kind === Kind.Mall) height = 8 + rng() * 3;
       else if (kind === Kind.Cinema) height = 9 + rng() * 5;
       else if (kind === Kind.House) height = 5 + rng() * 4;
-      else if (kind === Kind.Ruin) height = 4 + rng() * 7;       // jagged remains
+      else if (kind === Kind.Ruin) height = 4 + rng() * 7;
       else height = 1.5 + rng() * 2.5;                            // rubble pile
-      // ~50% of big-enough buildings are HOLLOW (enterable, with a supply cache inside)
-      const hollow = (fw >= HOLLOW_MIN && fd >= HOLLOW_MIN && rng() < 0.5) ? 1 : 0;
+      // ~50% of big-enough INTACT buildings are HOLLOW (enterable, with a supply cache inside)
+      const hollowOk = kind === Kind.House || kind === Kind.Hospital || kind === Kind.Cinema || kind === Kind.Mall;
+      const hollow = (hollowOk && fw >= HOLLOW_MIN && fd >= HOLLOW_MIN && rng() < 0.5) ? 1 : 0;
       let doorSide = 0;
       if (hollow) {
         doorSide = (rng() * 4) | 0;
@@ -335,7 +465,7 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
   }
 
   // boundary ring — thin tall barricade walls that resolve out of the fog as the city edge
-  const Bd = WORLD.BOUND, t = 4, wallH = 20;
+  const t = 4, wallH = 20;
   push(-Bd - t, -Bd - t, Bd + t, -Bd, ObsFlag.SOLID, wallH, Kind.Boundary); // south
   push(-Bd - t, Bd, Bd + t, Bd + t, ObsFlag.SOLID, wallH, Kind.Boundary);   // north
   push(-Bd - t, -Bd, -Bd, Bd, ObsFlag.SOLID, wallH, Kind.Boundary);         // west
@@ -391,23 +521,24 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     meshes.push(mesh);
   }
 
-  // roads: dark strips along the grid lines (cosmetic, never collidable)
-  if (!skipMeshes) {
-    const lines = grid + 1;
-    const roadCount = lines * 2;
+  // roads: oriented dark quads — downtown grid disc + winding suburb arterials + radial spokes
+  if (!skipMeshes && roadSegs.length > 0) {
     const quad = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
     const rmat = new THREE.MeshBasicMaterial({ color: 0x0a0c12 }); // dark asphalt
     rmat.polygonOffset = true; rmat.polygonOffsetFactor = -1; rmat.polygonOffsetUnits = -2;
-    const roads = new THREE.InstancedMesh(quad, rmat, roadCount);
+    const roads = new THREE.InstancedMesh(quad, rmat, roadSegs.length);
     roads.frustumCulled = false;
     roads.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-    const m = new THREE.Matrix4();
-    const span = grid * B;
-    let ri = 0;
-    for (let i = 0; i < lines; i++) {
-      const p = start + i * B - road / 2 + road / 2; // line centre
-      m.makeScale(road, 1, span); m.setPosition(p, 0.02, 0); roads.setMatrixAt(ri++, m); // vertical road
-      m.makeScale(span, 1, road); m.setPosition(0, 0.02, p); roads.setMatrixAt(ri++, m); // horizontal road
+    const m = new THREE.Matrix4(), rot = new THREE.Matrix4(), sc = new THREE.Matrix4(), pos = new THREE.Matrix4();
+    for (let i = 0; i < roadSegs.length; i++) {
+      const s = roadSegs[i];
+      const len = Math.hypot(s.bx - s.ax, s.bz - s.az) || 0.001;
+      const ang = Math.atan2(s.bz - s.az, s.bx - s.ax);
+      sc.makeScale(len, 1, s.hw * 2);
+      rot.makeRotationY(-ang);
+      pos.makeTranslation((s.ax + s.bx) / 2, 0.02, (s.az + s.bz) / 2);
+      m.multiplyMatrices(pos, rot).multiply(sc);
+      roads.setMatrixAt(i, m);
     }
     roads.instanceMatrix.needsUpdate = true;
     meshes.push(roads);
@@ -417,6 +548,7 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
 
   const city: City = {
     obstacles, blockGrid, drops, meshes, seed,
+    zoneAt(x: number, z: number): Zone { return zoneAt(x, z, warp); },
     setVisualTier(tier: number): void {
       // collidable rects are identical across tiers; only cosmetics toggle
       const show = tier <= 1;
