@@ -17,6 +17,7 @@ import { Bullets, Gems, Particles, Missiles, Drops } from './combat';
 import { Blast } from './fx';
 import { AmbientMotes } from './ambient';
 import { Orbitals, Tesla, Drones } from './weapons';
+import { Minimap } from './minimap';
 import { spawnRate, rollEnemyType, bossHp, hordeSize, BOSS_INTERVAL } from './director';
 import { createQuality, governQuality, QUALITY_TIERS, MAX_TIER } from './perf';
 import { loadSettings, saveSettings, qualityTier, applyPreset, clampZoom, ZOOM_MAX, ZOOM_DEFAULT, type Settings, type QualityMode } from './settings';
@@ -281,6 +282,7 @@ async function start() {
       groundWarp.loA.value.set(w.lo.a1, w.lo.a2, w.lo.a3); groundWarp.loP.value.set(w.lo.p1, w.lo.p2, w.lo.p3);
       groundWarp.hiA.value.set(w.hi.a1, w.hi.a2, w.hi.a3); groundWarp.hiP.value.set(w.hi.p1, w.hi.p2, w.hi.p3);
     }
+    minimap.rebuild(city); // pre-render the static map for this seed
   }
   const bullets = new Bullets(4096, scene);
   const gems = new Gems(4096, scene);
@@ -293,6 +295,9 @@ async function start() {
   const tesla = new Tesla(64, scene);
   const drones = new Drones(3, scene);
   const grid = new SpatialGrid(2.5, 96, MAX_ENEMIES);
+  const minimap = new Minimap(
+    document.getElementById('minimap') as HTMLCanvasElement,
+    document.getElementById('minimap-wrap') as HTMLElement, BOSS_TYPE);
 
   // --- post-processing bloom + post-apoc color grade, validated before use ---
   const gradeAmt = uniform(1.0); // tiered in applyQuality(): 1 ultra/high · 0.6 med · 0 low
@@ -1024,6 +1029,7 @@ async function start() {
         hud.tick(dt);
         if (touch) { if (canAct()) touch.show(); else touch.hide(); }
       }
+      if (started && !over) { minimap.update(player.position.x, player.position.z, facing, swarm); minimap.show(); }
       if (post && bloomEnabled) post.render();
       else renderer.render(scene, camera);
       prev = performance.now();
@@ -1242,6 +1248,8 @@ async function start() {
     city?.updateTunnels(player.position.x, player.position.z, dt); // fade a tunnel roof while you're inside it (real dt)
     hud.tick(dt);
     if (touch) { if (canAct()) touch.show(); else touch.hide(); } // show only during active play
+    if (started && !over) { minimap.update(player.position.x, player.position.z, facing, swarm); minimap.show(); }
+    else minimap.hide();
 
     if (post && bloomEnabled) post.render();
     else renderer.render(scene, camera);

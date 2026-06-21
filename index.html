@@ -152,6 +152,13 @@
     #combo.pulse { transform: translateX(-50%) scale(1.35); }
 
     .stats { position: absolute; top: 16px; right: 16px; text-align: right; font-size: 13px; line-height: 1.7; color: var(--hz-text-2); }
+    /* ---- minimap (top-right, below the stats) ---- */
+    #minimap-wrap { position: absolute; top: 84px; right: 16px; width: 168px; height: 168px; display: none;
+      padding: 4px; background: var(--hz-bg-panel-a); border: 1px solid var(--hz-edge-base);
+      box-shadow: 0 4px 18px rgba(0,0,0,0.55); z-index: 12;
+      clip-path: polygon(0 0, 100% 0, 100% calc(100% - 13px), calc(100% - 13px) 100%, 0 100%); }
+    #minimap { display: block; width: 160px; height: 160px; }
+    body.touch #minimap-wrap { display: none !important; } /* keep mobile HUD uncluttered */
     .stats b { color: var(--hz-cyan); font-weight: 700; }
     #backend-txt { position: absolute; bottom: 10px; right: 14px; font-size: 11px; color: var(--hz-text-3); letter-spacing: 1px; }
 
@@ -497,6 +504,7 @@
       SWARM <b id="enemies-txt">0</b><br/>
       FPS <b id="fps-txt">--</b>
     </div>
+    <div id="minimap-wrap"><canvas id="minimap" width="320" height="320"></canvas></div>
     <div id="abilities">
       <div class="ab" id="ab-missile">🚀 MISSILE <b>3</b> <span class="ab-key" id="ab-missile-key"></span></div>
       <div class="ab" id="ab-nuke">☢ NUKE <b>1</b> <span class="ab-key" id="ab-nuke-key"></span></div>
