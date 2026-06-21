@@ -52,7 +52,7 @@ export interface City {
 const CITY = {
   BLOCK: 46,          // road-grid pitch (a lot + a road)
   ROAD_W: 9,          // road width carved between lots
-  DENSITY: 0.66,      // P(a lot holds a building)
+  DENSITY: 0.33,      // P(a lot holds a building) — sparser, more open ground to fight in
   SPAWN_SAFE_R: 16,   // no building within this radius of the player's start
   // House, Hospital, Cinema, Ruin, Rubble — cumulative weights
   KIND_CDF: [0.42, 0.60, 0.70, 0.86, 1.0],
