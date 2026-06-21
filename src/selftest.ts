@@ -204,7 +204,7 @@ function run(): void {
     }
     check('city: a meaningful share of buildings are hollow', hollowN > 0 && hollowN <= eligible, `${hollowN}/${eligible}`);
     check('city: ~half of eligible buildings hollow', Math.abs(hollowN / eligible - 0.5) < 0.18, `${(hollowN / eligible).toFixed(2)}`);
-    check('city: one drop per hollow building', hc.drops.count === hollowN, `${hc.drops.count} vs ${hollowN}`);
+    check('city: at least one cache per hollow building', hc.drops.count >= hollowN, `${hc.drops.count} vs ${hollowN}`); // the mall holds several
     let dvalid = true; for (let i = 0; i < hc.drops.count; i++) if (hc.drops.type[i] > 2) dvalid = false;
     check('city: drop types are valid (0..2)', dvalid);
 

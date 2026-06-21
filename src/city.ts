@@ -519,6 +519,7 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
       if (Math.hypot(lotCx, lotCz) < CITY.SPAWN_SAFE_R + lotIn) continue;      // keep the start clear
       if (onRoad(lotCx, lotCz, bigRoads, lotIn * 0.3)) continue;               // leave arterials/spokes clear
       if (lotCx > MALL.x - 42 && lotCx < MALL.x + 42 && lotCz > MALL.lotZ - 28 && lotCz < MALL.z + 22) continue; // mall + its parking lot
+      if (Math.hypot(lotCx - CLIMB.x, lotCz - CLIMB.z) < CLIMB.r + lotIn) continue; // keep the climbable mountain walkable (no buildings on it)
       // pick kind by zone
       const kr = rng();
       const kind = pickKind(zn, kr);
@@ -637,8 +638,11 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     for (const s of [-9, 9]) push(gx + s - 0.8, gz - 0.8, gx + s + 0.8, gz + 0.8, ObsFlag.SOLID, 11, Kind.Billboard); // posts flank along x
     signGates.push({ x: gx, z: gz, y: 8.4, text: g.text, accent: g.accent, w: 18, h: 6 });
   }
-  // the suburb shopping MALL — a big-box landmark (renders via the building merge as a Mall archetype)
-  push(MALL.x - MALL.w / 2, MALL.z - MALL.d / 2, MALL.x + MALL.w / 2, MALL.z + MALL.d / 2, ObsFlag.SOLID, MALL.h, Kind.Mall);
+  // the suburb shopping MALL — a big ENTERABLE landmark: hollow, door facing the parking lot,
+  // with a handful of supply caches inside (you walk in from the lot and loot it)
+  push(MALL.x - MALL.w / 2, MALL.z - MALL.d / 2, MALL.x + MALL.w / 2, MALL.z + MALL.d / 2, ObsFlag.SOLID, MALL.h, Kind.Mall, 1, 0);
+  roofs.push({ x: MALL.x, z: MALL.z, w: MALL.w, d: MALL.d, y: Math.min(MALL.h, 6.5) + 0.2 });
+  for (const [ox, oz, ty] of [[-15, 0, 0], [0, -8, 1], [15, 7, 2], [-9, 9, 0]]) { dx.push(MALL.x + ox); dz.push(MALL.z + oz); dty.push(ty); }
 
   // boundary ring — thin tall barricade walls that resolve out of the fog as the city edge
   const t = 4, wallH = 20;
@@ -831,8 +835,9 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     const parts: THREE.BufferGeometry[] = [];
     const bt = KIND_TINT[Kind.Bridge], bbt = KIND_TINT[Kind.Billboard];
     for (const br of bridges) {
-      parts.push(paint(new THREE.BoxGeometry(br.len, 0.8, br.hw * 2).translate(br.x, 1.3, br.z), bt[0], bt[1], bt[2])); // deck
-      for (const s of [-1, 1]) parts.push(paint(new THREE.BoxGeometry(br.len, 1.5, 0.6).translate(br.x, 2.0, br.z + s * (br.hw - 0.4)), bt[0] * 1.1, bt[1] * 1.1, bt[2] * 1.1)); // rails
+      // a low boardwalk you walk OVER (just above the water), not a raised overpass you pass under
+      parts.push(paint(new THREE.BoxGeometry(br.len, 0.22, br.hw * 2).translate(br.x, 0.12, br.z), bt[0], bt[1], bt[2])); // deck
+      for (const s of [-1, 1]) parts.push(paint(new THREE.BoxGeometry(br.len, 0.7, 0.45).translate(br.x, 0.45, br.z + s * (br.hw - 0.3)), bt[0] * 1.1, bt[1] * 1.1, bt[2] * 1.1)); // low rails
     }
     for (const bb of billboards) {
       const px = -Math.sin(bb.ang), pz = Math.cos(bb.ang);
