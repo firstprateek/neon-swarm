@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import type { SpatialGrid } from './spatial';
+import { cellBlocked, nearestFree, type BlockGrid } from './city';
 import { srand } from './rng';
 
 /**
@@ -62,7 +63,7 @@ export const ENEMY_TYPES: EnemyType[] = [
 /** index into ENEMY_TYPES for the boss */
 export const BOSS_TYPE = 4;
 
-const PLAYER_RADIUS = 0.8;
+export const PLAYER_RADIUS = 0.8; // shared with main.ts move-resolve so the player can't clip walls
 const BOB_BUCKETS = 64;
 
 /** seconds an enemy flashes white after being hit */
@@ -85,6 +86,8 @@ const GROW_T = 0.25;
 export class Swarm {
   readonly max: number;
   count = 0;
+  private blockGrid: BlockGrid | null = null; // city collision; spawns relocate out of buildings
+  setBlockGrid(g: BlockGrid | null): void { this.blockGrid = g; }
 
   readonly posX: Float32Array;
   readonly posZ: Float32Array;
@@ -146,6 +149,11 @@ export class Swarm {
 
   spawn(typeIdx: number, x: number, z: number, hpOverride?: number): void {
     if (this.count >= this.max) return;
+    // never spawn a zombie sealed inside a building — nudge it to walkable ground.
+    // Deterministic (no srand) so the move is identical for a given seed/city.
+    if (this.blockGrid && cellBlocked(this.blockGrid, x, z)) {
+      const f = nearestFree(this.blockGrid, x, z); x = f.x; z = f.z;
+    }
     const i = this.count++;
     const t = ENEMY_TYPES[typeIdx];
     this.posX[i] = x;
@@ -217,11 +225,16 @@ export class Swarm {
    * Chase the player with local separation so the horde packs instead of
    * stacking. Returns contact damage dealt to the player this frame.
    */
-  update(dt: number, time: number, playerX: number, playerZ: number, grid: SpatialGrid): number {
+  update(dt: number, time: number, playerX: number, playerZ: number, grid: SpatialGrid, blockGrid: BlockGrid | null = null): number {
     const { posX, posZ, speed, radius, dps, bob, count, pulse, flash, baseCol, age, baseScale } = this;
     const m = this.mesh.instanceMatrix.array as Float32Array;
     const col = this.mesh.instanceColor!.array as Float32Array;
     const { cellStart, indices, dim } = grid;
+    // city collision (hoisted; the whole block is skipped when there's no city)
+    const bBlocked = blockGrid ? blockGrid.blocked : null;
+    const bDim = blockGrid ? blockGrid.dim : 0, bMax = bDim - 1;
+    const bInv = blockGrid ? blockGrid.invCell : 0, bHalf = blockGrid ? blockGrid.half : 0;
+    const bCell = blockGrid ? blockGrid.cell : 1, bCell2 = bCell * bCell;
     let playerDamage = 0;
     let colorDirty = false;
 
@@ -263,8 +276,22 @@ export class Swarm {
         }
       }
 
-      const nx = x + (vx + sepX * 10) * dt;
-      const nz = z + (vz + sepZ * 10) * dt;
+      let nx = x + (vx + sepX * 10) * dt;
+      let nz = z + (vz + sepZ * 10) * dt;
+      if (bBlocked) {
+        // clamp this frame's move to ≤ one cell so a single point-sample can't
+        // tunnel a thin wall (a separation spike can otherwise fling an enemy
+        // several cells in one frame), then axis-slide along any blocked cell.
+        let mx = nx - x, mz = nz - z;
+        const st2 = mx * mx + mz * mz;
+        if (st2 > bCell2) { const s = bCell / Math.sqrt(st2); mx *= s; mz *= s; nx = x + mx; nz = z + mz; }
+        let cx = ((nx + bHalf) * bInv) | 0; cx = cx < 0 ? 0 : cx > bMax ? bMax : cx;
+        let cz = ((z + bHalf) * bInv) | 0; cz = cz < 0 ? 0 : cz > bMax ? bMax : cz;
+        if (bBlocked[cz * bDim + cx]) nx = x;             // X blocked → slide
+        cx = ((nx + bHalf) * bInv) | 0; cx = cx < 0 ? 0 : cx > bMax ? bMax : cx;
+        cz = ((nz + bHalf) * bInv) | 0; cz = cz < 0 ? 0 : cz > bMax ? bMax : cz;
+        if (bBlocked[cz * bDim + cx]) nz = z;             // Z blocked → slide
+      }
       posX[i] = nx;
       posZ[i] = nz;
 

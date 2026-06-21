@@ -15,7 +15,8 @@ import { submitScore, fetchBoard, __lb } from './leaderboard';
 import { normNote, dprBucket, screenTier, refAllow } from './telemetry-helpers';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize } from './director';
-import { setSeed, srand, getSeed, clearSeed } from './rng';
+import { setSeed, srand, getSeed, clearSeed, streamFrom, CITY_SALT } from './rng';
+import { generateCity, resolveMove, cellBlocked, _reachable, WORLD, DIM, ObsFlag, type BlockGrid } from './city';
 import { dailySeed, dailyNumber, dailyKey, secondsToNextDaily, getDailyBest, recordDailyScore } from './daily';
 import { createQuality, governQuality, MAX_TIER } from './perf';
 import * as sfx from './sfx';
@@ -117,6 +118,78 @@ function run(): void {
     g2.build(sw2.posX, sw2.posZ, 1, 0, 0);
     const dmg = sw2.update(0.1, 0, 0, 0, g2);
     check('swarm: contact damage when touching', Math.abs(dmg - ENEMY_TYPES[0].dps * 0.1) < 1e-6, String(dmg));
+  }
+
+  // ---------- City: collidable world (seeded, deterministic, perf-safe) ----------
+  {
+    // 1. deterministic: same seed → identical rects; different seed → different
+    const a = generateCity(12345, false), a2 = generateCity(12345, false), b = generateCity(999, false);
+    const sameRects = a.obstacles.count === a2.obstacles.count &&
+      a.obstacles.minX.every((v, i) => v === a2.obstacles.minX[i]) &&
+      a.obstacles.height.every((v, i) => v === a2.obstacles.height[i]);
+    check('city: same seed → identical obstacle set', sameRects, `${a.obstacles.count} vs ${a2.obstacles.count}`);
+    check('city: different seed → different layout', a.obstacles.count !== b.obstacles.count ||
+      !a.obstacles.minX.every((v, i) => v === b.obstacles.minX[i]));
+
+    // 2. THE DESYNC GATE: generating the city must NOT advance the gameplay srand() stream
+    setSeed(777); const before: number[] = []; for (let i = 0; i < 8; i++) before.push(srand());
+    setSeed(777); generateCity(getSeed(), false); const after: number[] = []; for (let i = 0; i < 8; i++) after.push(srand());
+    check('city: gen does NOT consume the gameplay rng (determinism intact)', before.every((v, i) => v === after[i]));
+
+    // 3. streamFrom is independent + reproducible
+    const s1 = streamFrom(CITY_SALT, 42), s2 = streamFrom(CITY_SALT, 42), s3 = streamFrom(CITY_SALT, 43);
+    check('city: streamFrom reproducible + seed-distinct', s1() === s2() && streamFrom(CITY_SALT, 42)() !== s3());
+
+    // 4. collision sampling: a SOLID rect's centre blocks; the spawn-safe origin is free
+    const g = a.blockGrid;
+    let solidIdx = -1;
+    for (let i = 0; i < a.obstacles.count; i++) if (a.obstacles.flags[i] & ObsFlag.SOLID) { solidIdx = i; break; }
+    const ccx = (a.obstacles.minX[solidIdx] + a.obstacles.maxX[solidIdx]) / 2;
+    const ccz = (a.obstacles.minZ[solidIdx] + a.obstacles.maxZ[solidIdx]) / 2;
+    check('city: SOLID rect centre is blocked', cellBlocked(g, ccx, ccz) === 1);
+    check('city: origin (spawn-safe) is free', cellBlocked(g, 0, 0) === 0);
+
+    // 5. spawn-safe disc: nothing solid within r=14 of the start
+    let safe = true;
+    for (let ang = 0; ang < 16; ang++) { const rr = 13, t = (ang / 16) * Math.PI * 2; if (cellBlocked(g, Math.cos(t) * rr, Math.sin(t) * rr)) safe = false; }
+    check('city: spawn-safe disc clear', safe);
+
+    // 6. resolveMove: slides along a wall, no-ops in the open
+    const wall: BlockGrid = { cell: WORLD.CELL, invCell: 1 / WORLD.CELL, dim: DIM, half: WORLD.HALF, blocked: new Uint8Array(DIM * DIM) };
+    const setB = (x: number, z: number) => { const cx = ((x + wall.half) / wall.cell) | 0, cz = ((z + wall.half) / wall.cell) | 0; wall.blocked[cz * wall.dim + cx] = 1; };
+    for (let z = -10; z <= 10; z += 0.5) setB(5, z); // vertical wall column at x≈5
+    const slid = resolveMove(wall, 3, 0, 7, 0, 0.8); // push east into the wall
+    check('city: move into wall keeps blocked axis (slides)', slid.x < 5 && Math.abs(slid.z) < 1e-6, `x=${slid.x.toFixed(2)}`);
+    const open = resolveMove(wall, -50, -50, -48, -48, 0.8); // open ground
+    check('city: open move is unobstructed', Math.abs(open.x + 48) < 1e-6 && Math.abs(open.z + 48) < 1e-6);
+
+    // 7. tier-invariance: cosmetic LOD must NOT change the collidable set
+    const c = generateCity(2024, false);
+    const beforeCount = c.obstacles.count, beforeX = c.obstacles.minX.slice();
+    c.setVisualTier(0); c.setVisualTier(3);
+    check('city: visual tier never changes collidable geometry',
+      c.obstacles.count === beforeCount && c.obstacles.minX.every((v, i) => v === beforeX[i]));
+
+    // 8. navigability: the origin's connected free region covers ~all free space
+    // inside the boundary ring (no large sealed pockets that strand the horde)
+    const reach = _reachable(a.blockGrid);
+    const lo = ((-WORLD.BOUND + WORLD.HALF) / WORLD.CELL) | 0, hi = ((WORLD.BOUND + WORLD.HALF) / WORLD.CELL) | 0;
+    let freeInside = 0;
+    for (let cz = lo; cz <= hi; cz++) for (let cx = lo; cx <= hi; cx++) if (!g.blocked[cz * g.dim + cx]) freeInside++;
+    check('city: free space connected (≥85% reachable, no sealed pockets)', reach >= 0.85 * freeInside, `${reach}/${freeInside}`);
+
+    // 9. THE PERF+CORRECTNESS GATE: a dense pack cannot tunnel a 1-cell-thick wall
+    const tg: BlockGrid = { cell: WORLD.CELL, invCell: 1 / WORLD.CELL, dim: DIM, half: WORLD.HALF, blocked: new Uint8Array(DIM * DIM) };
+    const setT = (x: number, z: number) => { const cx = ((x + tg.half) / tg.cell) | 0, cz = ((z + tg.half) / tg.cell) | 0; tg.blocked[cz * tg.dim + cx] = 1; };
+    for (let z = -30; z <= 30; z += 0.5) setT(0.5, z); // 1-cell wall at x∈[0,1)
+    const scene = new THREE.Scene();
+    const pack = new Swarm(40, scene);
+    for (let i = 0; i < 40; i++) pack.spawn(1, -2 - (i % 5) * 0.3, -3 + (i % 7)); // runners, jammed west of the wall
+    const pg = new SpatialGrid(2.5, 64, 40);
+    let crossed = 0;
+    for (let f = 0; f < 90; f++) { pg.build(pack.posX, pack.posZ, pack.count, 10, 0); pack.update(1 / 60, f / 60, 10, 0, pg, tg); }
+    for (let i = 0; i < pack.count; i++) if (pack.posX[i] >= 1) crossed++;
+    check('city: dense pack does NOT tunnel a 1-cell wall', crossed === 0, `${crossed} crossed`);
   }
 
   // ---------- Bullets ----------

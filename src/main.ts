@@ -10,7 +10,8 @@ import { type Difficulty, DIFFICULTIES, flagsToPreset, coerceDifficulty } from '
 import { createTouch } from './touch';
 import { submitFeedback, flushFeedback, beaconFlush, deviceClass, APP_VERSION, type FeedbackCtx } from './feedback';
 import { SpatialGrid } from './spatial';
-import { Swarm, ENEMY_TYPES, BOSS_TYPE, HIT_FLASH } from './swarm';
+import { Swarm, ENEMY_TYPES, BOSS_TYPE, HIT_FLASH, PLAYER_RADIUS } from './swarm';
+import { generateCity, disposeCity, resolveMove, cellBlocked, type City, type BlockGrid } from './city';
 import { Bullets, Gems, Particles, Missiles } from './combat';
 import { Blast } from './fx';
 import { AmbientMotes } from './ambient';
@@ -242,6 +243,17 @@ async function start() {
   // --- systems ---
   const state = createState();
   const swarm = new Swarm(MAX_ENEMIES, scene);
+  // the collidable city (generated at deploy from the FINAL seed; null until then)
+  let city: City | null = null;
+  let blockGrid: BlockGrid | null = null;
+  function buildWorld(): void {
+    if (city) disposeCity(scene, city);
+    city = generateCity(getSeed(), isTouch);
+    blockGrid = city.blockGrid;
+    swarm.setBlockGrid(blockGrid); // relocate any spawn that lands in a building
+    for (const m of city.meshes) scene.add(m);
+    city.setVisualTier(quality.tier);
+  }
   const bullets = new Bullets(4096, scene);
   const gems = new Gems(4096, scene);
   const particles = new Particles(8192, scene);
@@ -310,6 +322,7 @@ async function start() {
     gradeAmt.value = quality.tier <= 1 ? 1.0 : quality.tier === 2 ? 0.6 : 0.0;
     uDetail.value = quality.tier <= 1 ? 1.0 : quality.tier === 2 ? 0.5 : 0.0;
     ambient.setBudget([260, 160, 90, 0][quality.tier] ?? 160); // ash count tiers down (0 on low)
+    city?.setVisualTier(quality.tier); // cosmetic city LOD only — collidable rects never change
     const gov = pinnedTier >= 0 ? 'fixed' : `${targetFps}fps target`;
     hud.setBackend(`${onWebGPU() ? 'WebGPU' : 'WebGL2'}${backendNote} · ${gov} · quality: ${tq.label}${bloomEnabled ? '' : ' (no bloom)'}`);
   }
@@ -362,6 +375,7 @@ async function start() {
     saveSettings(settings);
     setAvatar(idx);
     started = true;
+    buildWorld(); // generate the collidable city from the now-final seed
     touch?.setFireVisible(!settings.autoFire); // mobile FIRE button only when auto-fire is off
     applyAimMode(); // reticle cursor (desktop) / aim stick (mobile) for manual modes
     sfx.initAudio();
@@ -950,6 +964,9 @@ async function start() {
     touch, canAct, setTouchMove, clearTouchMove, getMove,
     fireVolley, setFireHeld, getAim, setMouseAim,
     facing: () => facing,
+    city: () => city,
+    regenCity: () => { buildWorld(); return city?.obstacles.count ?? 0; },
+    collideAt: (x: number, z: number) => (blockGrid ? cellBlocked(blockGrid, x, z) === 1 : false),
     controls: () => ({ autoFire: settings.autoFire, gunLock: settings.gunLock, missileLock: settings.missileLock }),
     setControls: (p: Partial<Pick<Settings, 'autoFire' | 'gunLock' | 'missileLock'>>) => Object.assign(settings, p),
     isFiring: () => touch?.isFiring() ?? false,
@@ -1003,13 +1020,20 @@ async function start() {
 
     const mv = getMove();
     if (!engaged && (mv.x !== 0 || mv.z !== 0 || isAimActive())) engaged = true; // first move/aim "starts" the run
-    player.position.x += mv.x * state.moveSpeed * dt;
-    player.position.z += mv.z * state.moveSpeed * dt;
+    let tgtX = player.position.x + mv.x * state.moveSpeed * dt;
+    let tgtZ = player.position.z + mv.z * state.moveSpeed * dt;
     // dash burst (fast, brief)
     if (dashTime > 0) {
       dashTime -= dt;
-      player.position.x += dashDirX * DASH_SPEED * dt;
-      player.position.z += dashDirZ * DASH_SPEED * dt;
+      tgtX += dashDirX * DASH_SPEED * dt;
+      tgtZ += dashDirZ * DASH_SPEED * dt;
+    }
+    if (blockGrid) {
+      // city collision: axis-slide along walls; substepped so a dash can't tunnel
+      const rp = resolveMove(blockGrid, player.position.x, player.position.z, tgtX, tgtZ, PLAYER_RADIUS);
+      player.position.x = rp.x; player.position.z = rp.z;
+    } else {
+      player.position.x = tgtX; player.position.z = tgtZ;
     }
     // facing: in MANUAL aim modes (gunLock off) the body faces the AIM input
     // (mouse / aim-stick) — true twin-stick; otherwise it follows movement.
@@ -1054,7 +1078,7 @@ async function start() {
     camera.lookAt(player.position.x, 0, player.position.z);
 
     grid.build(swarm.posX, swarm.posZ, swarm.count, player.position.x, player.position.z);
-    const damage = swarm.update(dt, state.time, player.position.x, player.position.z, grid);
+    const damage = swarm.update(dt, state.time, player.position.x, player.position.z, grid, blockGrid);
     if (damage > 0 && !godMode && iframes <= 0) {
       state.hp -= damage;
       hud.damageFlash();

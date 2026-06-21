@@ -29,6 +29,22 @@ export function mulberry32(seed: number): () => number {
 let _rng: () => number = Math.random;
 let _seed = 0;
 
+/** salt for the city-generation stream (kept distinct from any future streams) */
+export const CITY_SALT = 0x00c17;
+
+/**
+ * An INDEPENDENT seeded stream derived from (seed ^ salt) via an xmur3 avalanche
+ * → mulberry32. Crucially it NEVER advances the gameplay `srand()` cursor, so
+ * generating the city is fully reproducible from the seed yet decorrelated from
+ * (and harmless to) the enemy/upgrade/loot rolls that determinism depends on.
+ */
+export function streamFrom(salt: number, seed: number = _seed): () => number {
+  let h = (seed ^ Math.imul(salt, 0x9e3779b1)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x21f0aaad);
+  h = Math.imul(h ^ (h >>> 15), 0x735a2d97);
+  return mulberry32((h ^ (h >>> 15)) >>> 0);
+}
+
 /** seed the gameplay stream; pass a 32-bit unsigned int */
 export function setSeed(seed: number): void {
   _seed = seed >>> 0;
