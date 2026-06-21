@@ -634,8 +634,8 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
   ];
   for (const g of GATES) {
     const gx = Math.cos(g.ang) * g.r, gz = Math.sin(g.ang) * g.r;
-    for (const s of [-9, 9]) push(gx + s - 0.8, gz - 0.8, gx + s + 0.8, gz + 0.8, ObsFlag.SOLID, 12, Kind.Billboard); // posts flank along x
-    signGates.push({ x: gx, z: gz, y: 7.5, text: g.text, accent: g.accent, w: 18, h: 6 });
+    for (const s of [-9, 9]) push(gx + s - 0.8, gz - 0.8, gx + s + 0.8, gz + 0.8, ObsFlag.SOLID, 11, Kind.Billboard); // posts flank along x
+    signGates.push({ x: gx, z: gz, y: 8.4, text: g.text, accent: g.accent, w: 18, h: 6 });
   }
   // the suburb shopping MALL — a big-box landmark (renders via the building merge as a Mall archetype)
   push(MALL.x - MALL.w / 2, MALL.z - MALL.d / 2, MALL.x + MALL.w / 2, MALL.z + MALL.d / 2, ObsFlag.SOLID, MALL.h, Kind.Mall);
@@ -919,7 +919,7 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     const postParts: THREE.BufferGeometry[] = [];
     const bbt = KIND_TINT[Kind.Billboard];
     for (const sg of signGates) {
-      for (const s of [-9, 9]) postParts.push(paint(new THREE.BoxGeometry(1.4, 16, 1.4).translate(sg.x + s, 8, sg.z), bbt[0], bbt[1], bbt[2]));
+      for (const s of [-9, 9]) postParts.push(paint(new THREE.BoxGeometry(1.4, 11, 1.4).translate(sg.x + s, 5.5, sg.z), bbt[0], bbt[1], bbt[2]));
       const mat = new THREE.MeshBasicMaterial({ map: makeSignTexture(sg.text, sg.accent), toneMapped: false, side: THREE.DoubleSide });
       const sign = new THREE.Mesh(new THREE.PlaneGeometry(sg.w, sg.h), mat);
       sign.position.set(sg.x, sg.y, sg.z);
