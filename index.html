@@ -157,7 +157,9 @@
       padding: 4px; background: var(--hz-bg-panel-a); border: 1px solid var(--hz-edge-base);
       box-shadow: 0 4px 18px rgba(0,0,0,0.55); z-index: 12;
       clip-path: polygon(0 0, 100% 0, 100% calc(100% - 13px), calc(100% - 13px) 100%, 0 100%); }
-    #minimap { display: block; width: 160px; height: 160px; }
+    /* override the global `canvas { position:fixed; inset:0 }` (that's for the 3D play canvas) so the
+       minimap stays inside its top-right panel instead of being yanked to the corner under the scene */
+    #minimap { display: block; position: static; inset: auto; width: 160px; height: 160px; }
     body.touch #minimap-wrap { display: none !important; } /* keep mobile HUD uncluttered */
     .stats b { color: var(--hz-cyan); font-weight: 700; }
     #backend-txt { position: absolute; bottom: 10px; right: 14px; font-size: 11px; color: var(--hz-text-3); letter-spacing: 1px; }
