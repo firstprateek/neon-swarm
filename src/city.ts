@@ -164,6 +164,52 @@ function reachableFromOrigin(g: BlockGrid): number {
   return reached;
 }
 
+// ---- building character: compose a recognisable silhouette per kind from merged
+//      boxes/prisms. Each part is world-positioned + vertex-coloured and folded into
+//      the single building mesh (1 draw call). Collision stays the AABB footprint. ---
+function paint(g: THREE.BufferGeometry, r: number, gg: number, b: number): THREE.BufferGeometry {
+  const ng = g.toNonIndexed(); // non-indexed → crisp flat-shaded faces + safe merge
+  g.dispose();
+  const n = ng.attributes.position.count;
+  const c = new Float32Array(n * 3);
+  for (let k = 0; k < n; k++) { c[k * 3] = r; c[k * 3 + 1] = gg; c[k * 3 + 2] = b; }
+  ng.setAttribute('color', new THREE.BufferAttribute(c, 3));
+  return ng;
+}
+function archetypeParts(kind: Kind, w: number, h: number, d: number, cx: number, cz: number, tint: number[], rng: () => number): THREE.BufferGeometry[] {
+  const parts: THREE.BufferGeometry[] = [];
+  const add = (g: THREE.BufferGeometry, mul = 1) => parts.push(paint(g, tint[0] * mul, tint[1] * mul, tint[2] * mul));
+  if (kind === Kind.House) {
+    const bodyH = h * 0.66;
+    add(new THREE.BoxGeometry(w, bodyH, d).translate(cx, bodyH / 2, cz));                 // walls
+    const roofH = h * 0.5;
+    add(new THREE.ConeGeometry(Math.max(w, d) * 0.62, roofH, 4).rotateY(Math.PI / 4).translate(cx, bodyH + roofH / 2, cz), 0.7); // hipped roof (darker)
+  } else if (kind === Kind.Hospital) {
+    add(new THREE.BoxGeometry(w, h, d).translate(cx, h / 2, cz));                           // main slab
+    add(new THREE.BoxGeometry(w * 0.18, h * 0.7, d * 1.12).translate(cx - w * 0.46, h * 0.35, cz), 0.85); // side wing
+    add(new THREE.BoxGeometry(w * 0.4, h * 0.12, d * 0.4).translate(cx, h + h * 0.06, cz), 1.2);          // rooftop unit (bright)
+    add(new THREE.BoxGeometry(w * 0.06, h * 0.16, d * 0.32).translate(cx + w * 0.2, h + h * 0.1, cz), 1.5); // a pale roof marker
+  } else if (kind === Kind.Cinema) {
+    add(new THREE.BoxGeometry(w, h, d).translate(cx, h / 2, cz));                           // hall
+    add(new THREE.BoxGeometry(w * 1.05, h * 0.16, d * 0.24).translate(cx, h * 0.34, cz + d * 0.5), 1.25);  // marquee canopy (front, lit)
+    add(new THREE.BoxGeometry(w * 0.14, h * 0.55, d * 0.1).translate(cx, h + h * 0.27, cz), 1.35);         // vertical sign blade
+  } else if (kind === Kind.Ruin) {
+    const fragH = h * (0.45 + rng() * 0.45);
+    add(new THREE.BoxGeometry(w * 0.92, fragH, d * 0.92).translate(cx, fragH / 2, cz));     // standing remnant
+    const tiltH = h * 0.5, lean = (rng() - 0.5) * 0.5;
+    add(new THREE.BoxGeometry(w * 0.42, tiltH, d * 0.42).rotateZ(lean).translate(cx + w * 0.28, tiltH * 0.42, cz - d * 0.18), 0.6); // collapsed slab
+  } else if (kind === Kind.Boundary) {
+    add(new THREE.BoxGeometry(w, h, d).translate(cx, h / 2, cz));                           // barricade wall
+  } else { // Rubble — scatter of low chunks
+    const n = 3 + ((rng() * 3) | 0);
+    for (let s = 0; s < n; s++) {
+      const sw = w * (0.18 + rng() * 0.3), sd = d * (0.18 + rng() * 0.3), sh = h * (0.4 + rng() * 0.9);
+      add(new THREE.BoxGeometry(sw, sh, sd).rotateY(rng() * 0.6).translate(cx + (rng() - 0.5) * w * 0.6, sh / 2, cz + (rng() - 0.5) * d * 0.6), 0.7 + rng() * 0.4);
+    }
+  }
+  return parts;
+}
+
 // ---- generation ----
 export function generateCity(seed: number, isTouch: boolean): City {
   void isTouch; // collidable set is identical across devices/tiers (seed-only) — fairness/determinism
@@ -247,15 +293,10 @@ export function generateCity(seed: number, isTouch: boolean): City {
       const h = obstacles.height[i];
       const cx = (obstacles.minX[i] + obstacles.maxX[i]) / 2;
       const cz = (obstacles.minZ[i] + obstacles.maxZ[i]) / 2;
-      const bg = new THREE.BoxGeometry(w, h, d).translate(cx, h / 2, cz); // base on y=0
       const tint = KIND_TINT[obstacles.kind[i]] ?? KIND_TINT[0];
       const j = 0.85 + rng() * 0.3; // grime jitter from the city stream
-      const r = tint[0] * j, g = tint[1] * j, b = tint[2] * j;
-      const nv = bg.attributes.position.count;
-      const colors = new Float32Array(nv * 3);
-      for (let k = 0; k < nv; k++) { colors[k * 3] = r; colors[k * 3 + 1] = g; colors[k * 3 + 2] = b; }
-      bg.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-      parts.push(bg);
+      const t = [tint[0] * j, tint[1] * j, tint[2] * j];
+      for (const p of archetypeParts(obstacles.kind[i] as Kind, w, h, d, cx, cz, t, rng)) parts.push(p);
     }
     const merged = BufferGeometryUtils.mergeGeometries(parts, false);
     parts.forEach(p => p.dispose());
