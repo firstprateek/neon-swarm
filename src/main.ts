@@ -994,6 +994,7 @@ async function start() {
         else if (over) particles.update(dt);
         blast.update(dt);
         ambient.update(dt, camera.position.x, camera.position.z, i / 60);
+        city?.updateTunnels(player.position.x, player.position.z, dt); // mirror the rAF loop (tunnel + roof fades)
         hud.tick(dt);
         if (touch) { if (canAct()) touch.show(); else touch.hide(); }
       }

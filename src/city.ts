@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
+import { attribute } from 'three/tsl';
 import { streamFrom, CITY_SALT } from './rng';
 
 /**
@@ -67,6 +68,8 @@ export interface City {
 const WALL_T = 2;   // hollow-building wall thickness (world units)
 const DOOR_W = 5;   // doorway gap width
 const HOLLOW_MIN = 16; // a building must be this wide/deep to be made hollow
+const ROOF_OUT = 0.5;  // hollow-roof opacity when you're outside (a faint shell you see through)
+const ROOF_IN = 0.12;  // hollow-roof opacity when you're inside (highly transparent)
 
 // ---- generation tunables (counts are SEED-only — never tier/device derived) ----
 const CITY = {
@@ -404,6 +407,8 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
   };
   // supply caches placed inside hollow buildings
   const dx: number[] = [], dz: number[] = [], dty: number[] = [];
+  // footprints of hollow buildings → fade-able roofs (render-only, never collidable)
+  const roofs: { x: number; z: number; w: number; d: number; y: number }[] = [];
 
   const H = WORLD.HALF, B = CITY.BLOCK, road = CITY.ROAD_W;
   const lotIn = (B - road); // usable lot span
@@ -475,6 +480,7 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
         doorSide = (rng() * 4) | 0;
         const dr = rng(); // cache type: health 50% / missiles 35% / nuke 15%
         dx.push(cx); dz.push(cz); dty.push(dr < 0.5 ? 0 : dr < 0.85 ? 1 : 2);
+        roofs.push({ x: cx, z: cz, w: fw, d: fd, y: Math.min(height, 6.5) + 0.2 }); // roof sits at the wall top
       }
       push(cx - fw / 2, cz - fd / 2, cx + fw / 2, cz + fd / 2, ObsFlag.SOLID, height, kind, hollow, doorSide);
     }
@@ -582,6 +588,12 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
   // ---- meshes ----
   const meshes: THREE.Object3D[] = [];
   const cosmetic: THREE.Object3D[] = []; // toggled by visual tier
+  // per-frame fade state for the hollow-building roofs (built below if there are any)
+  let roofRT: {
+    fade: Float32Array; attr: THREE.BufferAttribute; alpha: Float32Array;
+    starts: Int32Array; counts: Int32Array;
+    minX: Float32Array; maxX: Float32Array; minZ: Float32Array; maxZ: Float32Array; n: number;
+  } | null = null;
 
   // buildings: ONE merged static geometry (per-building boxes baked into world
   // space, vertex-coloured by kind). One draw call, and it sidesteps a quirk where
@@ -599,7 +611,7 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
       const j = 0.82 + rng() * 0.22; // grime jitter from the city stream (capped so faces never bloom white)
       const t = [tint[0] * j, tint[1] * j, tint[2] * j];
       const sub = obstacles.hollow[i]
-        ? hollowParts(h, w, d, cx, cz, t, obstacles.doorSide[i])      // roofless wall ring
+        ? hollowParts(h, w, d, cx, cz, t, obstacles.doorSide[i])      // wall ring (a fade-roof is added below)
         : archetypeParts(obstacles.kind[i] as Kind, w, h, d, cx, cz, t, rng);
       for (const p of sub) parts.push(p);
     }
@@ -610,6 +622,44 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     const mesh = new THREE.Mesh(merged, mat);
     mesh.frustumCulled = false;
     meshes.push(mesh);
+  }
+
+  // fade-able transparent ROOFS over the hollow (cache) buildings — ONE merged mesh whose
+  // per-vertex `fade` attribute is the opacity. A faint shell from outside (you make out the
+  // structure + glimpse the cache); eases to highly transparent while you're inside (see §
+  // updateTunnels). Render-only — never collidable; you still enter through the door.
+  if (!skipMeshes && roofs.length > 0) {
+    const parts: THREE.BufferGeometry[] = [];
+    const starts: number[] = [], counts: number[] = [];
+    let vOff = 0;
+    for (const r of roofs) {
+      const g = paint(new THREE.BoxGeometry(r.w + 0.6, 0.4, r.d + 0.6).translate(r.x, r.y, r.z), 0.17, 0.19, 0.23);
+      const vc = g.attributes.position.count;
+      starts.push(vOff); counts.push(vc); vOff += vc;
+      parts.push(g);
+    }
+    const merged = BufferGeometryUtils.mergeGeometries(parts, false);
+    parts.forEach(p => p.dispose());
+    const totalV = merged.attributes.position.count;
+    const fade = new Float32Array(totalV).fill(ROOF_OUT);
+    const attr = new THREE.BufferAttribute(fade, 1);
+    attr.setUsage(THREE.DynamicDrawUsage);
+    merged.setAttribute('fade', attr);
+    const rmat = new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, depthWrite: false, emissive: 0x0b0d12 });
+    (rmat as unknown as { opacityNode: unknown }).opacityNode = attribute('fade'); // per-vertex opacity → per-building fade
+    const rmesh = new THREE.Mesh(merged, rmat);
+    rmesh.frustumCulled = false; rmesh.renderOrder = 4;
+    meshes.push(rmesh);
+    const n = roofs.length;
+    roofRT = {
+      fade, attr, alpha: new Float32Array(n).fill(ROOF_OUT),
+      starts: Int32Array.from(starts), counts: Int32Array.from(counts),
+      minX: Float32Array.from(roofs, r => r.x - r.w / 2),
+      maxX: Float32Array.from(roofs, r => r.x + r.w / 2),
+      minZ: Float32Array.from(roofs, r => r.z - r.d / 2),
+      maxZ: Float32Array.from(roofs, r => r.z + r.d / 2),
+      n,
+    };
   }
 
   // park terrain — mountains (stepped prisms) + tree trunks merged into ONE Lambert mesh
@@ -747,14 +797,30 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     // fade a tunnel's roof when the PLAYER (only) is inside its bore — sub-µs, real dt.
     // Collision is decoupled: the horde streams through the carved-free bore regardless.
     updateTunnels(px: number, pz: number, dt: number): void {
+      const k = Math.min(1, dt * 6); // frame-rate-independent ease
       for (let i = 0; i < tunnelRT.length; i++) {
         const tr = tunnelRT[i];
         const inside = px >= tr.minX && px <= tr.maxX && pz >= tr.minZ && pz <= tr.maxZ;
-        const target = inside ? 0.14 : 1.0;
-        tr.alpha += (target - tr.alpha) * Math.min(1, dt * 6); // frame-rate-independent ease
+        tr.alpha += ((inside ? 0.14 : 1.0) - tr.alpha) * k;
         tr.mat.opacity = tr.alpha;
         tr.mat.transparent = tr.alpha < 0.999;
         tr.mat.depthWrite = !tr.mat.transparent;
+      }
+      // hollow-building roofs: fade the one you're standing in toward ROOF_IN, others to ROOF_OUT
+      const rr = roofRT;
+      if (rr) {
+        let dirty = false;
+        for (let i = 0; i < rr.n; i++) {
+          const inside = px >= rr.minX[i] && px <= rr.maxX[i] && pz >= rr.minZ[i] && pz <= rr.maxZ[i];
+          const a = rr.alpha[i] + ((inside ? ROOF_IN : ROOF_OUT) - rr.alpha[i]) * k;
+          if (Math.abs(a - rr.alpha[i]) > 0.0008) {
+            rr.alpha[i] = a;
+            const s = rr.starts[i], end = s + rr.counts[i];
+            for (let v = s; v < end; v++) rr.fade[v] = a;
+            dirty = true;
+          }
+        }
+        if (dirty) rr.attr.needsUpdate = true;
       }
     },
   };
