@@ -188,7 +188,9 @@ export function setBackend(label: string): void {
 }
 
 export function damageFlash(): void {
-  vignetteOpacity = Math.min(0.9, vignetteOpacity + 0.06);
+  // reduced-motion: the red hit-vignette pulses on every contact hit — cap its peak
+  // (a full-screen red strobe is a discomfort/seizure risk), mirroring flash()
+  vignetteOpacity = Math.min(REDUCED_MOTION ? 0.3 : 0.9, vignetteOpacity + 0.06);
 }
 
 export function tick(dt: number): void {
