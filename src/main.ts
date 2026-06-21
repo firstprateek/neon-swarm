@@ -17,7 +17,7 @@ import { AmbientMotes } from './ambient';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize, BOSS_INTERVAL } from './director';
 import { createQuality, governQuality, QUALITY_TIERS, MAX_TIER } from './perf';
-import { loadSettings, saveSettings, qualityTier, applyPreset, clampZoom, type Settings, type QualityMode } from './settings';
+import { loadSettings, saveSettings, qualityTier, applyPreset, clampZoom, ZOOM_MAX, type Settings, type QualityMode } from './settings';
 import { AVATARS, makeSurvivor } from './avatars';
 import { setSeed, getSeed, randomSeed, srand } from './rng';
 import { TELEMETRY_ENDPOINT } from './config';
@@ -360,6 +360,7 @@ async function start() {
     setAvatar(idx);
     started = true;
     touch?.setFireVisible(!settings.autoFire); // mobile FIRE button only when auto-fire is off
+    applyAimMode(); // reticle cursor (desktop) / aim stick (mobile) for manual modes
     sfx.initAudio();
     runsThisSession++;
     track('run_start', {
@@ -550,8 +551,15 @@ async function start() {
     saveSettings(settings);
   }
 
+  // manual aim (gunLock off) → desktop reticle cursor + mobile right-thumb aim stick
+  function applyAimMode(): void {
+    const manual = !settings.gunLock;
+    if (!isTouch) document.body.classList.toggle('manual-aim', manual);
+    touch?.setAimMode(manual);
+  }
+
   // control mutations are blocked while a daily run locks the tier
-  const onCtl = (mut: () => void) => { if (controlsLocked()) return; mut(); applySettings(); syncSettings(); };
+  const onCtl = (mut: () => void) => { if (controlsLocked()) return; mut(); applySettings(); applyAimMode(); syncSettings(); };
   autofireChk.addEventListener('change', () => onCtl(() => { settings.autoFire = autofireChk.checked; touch?.setFireVisible(!settings.autoFire); }));
   gunlockChk.addEventListener('change', () => onCtl(() => { settings.gunLock = gunlockChk.checked; }));
   misslockChk.addEventListener('change', () => onCtl(() => { settings.missileLock = misslockChk.checked; }));
@@ -835,11 +843,10 @@ async function start() {
     canvas.addEventListener('contextmenu', e => e.preventDefault());
     canvas.addEventListener('pointerdown', e => {
       if (!canAct()) return;
-      if (e.button === 0) setFireHeld(true);              // LMB = hold to fire
-      else if (e.button === 2) { e.preventDefault(); fireMissile(); } // RMB = missile
+      if (e.button === 0) fireMissile();                            // LMB = missile
+      else if (e.button === 2) { e.preventDefault(); fireNuke(); }  // RMB = nuke
+      // gun fires automatically (Medium) or via the FIRE key (Hard) — see wantFire
     });
-    window.addEventListener('pointerup', e => { if (e.button === 0) setFireHeld(false); });
-    window.addEventListener('blur', () => setFireHeld(false));
   }
 
   // wall-clock ability cooldown + missile refill (unaffected by hit-stop slow-mo)
@@ -1027,8 +1034,10 @@ async function start() {
     camera.position.y += (26 * settings.zoom - camera.position.y) * zlerp;
     camera.position.z += (player.position.z + 15 * settings.zoom - camera.position.z) * zlerp;
     // fog is camera-distance based, so dollying out would over-fog everything (incl. the
-    // player). Scale density by 1/zoom so the haze at the player stays constant across zoom.
-    (scene.fog as THREE.FogExp2).density = FOG_BASE / settings.zoom;
+    // player). Scale density by 1/zoom to hold the haze at the player constant, THEN cut it
+    // by up to 75% as you zoom OUT (0 at default, −75% at max) so the player stays clear.
+    const zoomOut = Math.min(1, Math.max(0, (settings.zoom - 1) / (ZOOM_MAX - 1)));
+    (scene.fog as THREE.FogExp2).density = (FOG_BASE / settings.zoom) * (1 - 0.75 * zoomOut);
     // transient, zero-mean screen-shake offset (re-centered by the lerp next frame)
     if (shake > 0.001) {
       camera.position.x += (Math.random() * 2 - 1) * shake;

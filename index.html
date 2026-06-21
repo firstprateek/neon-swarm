@@ -90,6 +90,8 @@
     }
     body { font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, monospace; color: var(--hz-text); }
     canvas { position: fixed; inset: 0; display: block; height: 100dvh; }
+    /* manual aim (desktop): a neon reticle replaces the OS pointer over the play canvas */
+    body.manual-aim canvas { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34'%3E%3Ccircle cx='17' cy='17' r='10' fill='none' stroke='%235ef2ff' stroke-width='2'/%3E%3Cpath d='M17 1v8M17 25v8M1 17h8M25 17h8' stroke='%235ef2ff' stroke-width='2'/%3E%3Ccircle cx='17' cy='17' r='1.6' fill='%23ff2d8e'/%3E%3C/svg%3E") 17 17, crosshair; }
 
     /* ===================== UTILITY GRAMMAR ===================== */
     /* chamfer tiers — two opposite corners (TL + BR) machined off */
@@ -180,6 +182,24 @@
       width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%;
       background: rgba(94,242,255,0.85); box-shadow: 0 0 18px rgba(94,242,255,0.6); will-change: transform; }
     #tc-stick-zone { position: absolute; right: 0; bottom: 0; width: 55%; height: 60%; pointer-events: auto; touch-action: none; }
+    /* aim stick (manual-aim modes only) — amber to read as the weapon/aim thumb */
+    #tc-aim { position: absolute; width: 132px; height: 132px; border-radius: 50%;
+      border: 2px solid rgba(255,210,74,0.4); background: rgba(255,210,74,0.06);
+      transform: translate(-50%, -50%); opacity: 0; pointer-events: none;
+      transition: opacity 0.12s; will-change: left, top; }
+    #tc-aim.live { opacity: 0.55; }
+    #tc-aim-knob { position: absolute; left: 50%; top: 50%;
+      width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%;
+      background: rgba(255,210,74,0.9); box-shadow: 0 0 18px rgba(255,180,40,0.6); will-change: transform; }
+    #tc-aim-zone { position: absolute; display: none; touch-action: none; }
+    /* manual-aim layout: MOVE left thumb, AIM right thumb, abilities centred, FIRE off */
+    #touch-layer.aim-mode #tc-stick-zone { right: auto; left: 0; width: 50%; }
+    #touch-layer.aim-mode #tc-aim-zone { display: block; right: 0; bottom: 0; width: 50%; height: 62%; pointer-events: auto; }
+    #touch-layer.aim-mode #tc-fire { display: none !important; }
+    #touch-layer.aim-mode #tc-abilities { left: 50%; right: auto; transform: translateX(-50%);
+      bottom: max(14px, env(safe-area-inset-bottom)); align-items: center; }
+    #touch-layer.aim-mode .tc-btn { width: 58px; height: 58px; font-size: 22px; opacity: 0.85; }
+    #touch-layer.aim-mode .tc-btn:nth-child(2), #touch-layer.aim-mode .tc-btn:nth-child(3) { margin-left: 0; }
     /* ability buttons — bottom LEFT, thumb-arc (dash easiest at the bottom). Round = thumb targets. */
     #tc-abilities { position: absolute;
       left: max(18px, env(safe-area-inset-left));
@@ -499,6 +519,8 @@
   <div id="touch-layer">
     <div id="tc-stick-zone"></div>
     <div id="tc-stick"><div id="tc-stick-knob"></div></div>
+    <div id="tc-aim-zone"></div>
+    <div id="tc-aim"><div id="tc-aim-knob"></div></div>
     <div id="tc-abilities">
       <button id="tc-dash"    class="tc-btn" aria-label="Dash">⟫</button>
       <button id="tc-missile" class="tc-btn" aria-label="Missile">🚀<span class="tc-ct" id="tc-missile-ct">3</span></button>

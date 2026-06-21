@@ -24,7 +24,7 @@ import { presetFlags, flagsToPreset, coerceDifficulty } from './modes';
 import { defaultKeys, mergeKeys, KEY_ACTIONS, resolveAction, isDown, keyLabel, isBindable } from './keybind';
 import { AVATARS, makeSurvivor } from './avatars';
 import { createState, grantXp, xpForLevel, rollUpgrades, registerKill, tickCombo, comboMultiplier, SCORE_BY_TYPE, UPGRADES } from './state';
-import { getMove, setTouchMove, clearTouchMove } from './input';
+import { getMove, getAim, setTouchMove, clearTouchMove } from './input';
 import { createTouch } from './touch';
 import { submitFeedback, pendingFeedback, type FeedbackCtx } from './feedback';
 import * as hud from './hud';
@@ -414,6 +414,22 @@ function run(): void {
 
     // 14. settings reachable: the pause overlay exists with a hidden class to toggle
     check('touch(smoke): pause overlay present for the gear', !!document.getElementById('pause-overlay'));
+
+    // 15-18. AIM stick (manual modes): toggles layout, drags an aim direction, fires, clears
+    tc.setAimMode(true);
+    check('touch(aim): aim mode toggles the layout class',
+      document.getElementById('touch-layer')!.classList.contains('aim-mode'));
+    const aimZone = document.getElementById('tc-aim-zone')!;
+    aimZone.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 20, clientX: 600, clientY: 600, bubbles: true }));
+    aimZone.dispatchEvent(new PointerEvent('pointermove', { pointerId: 20, clientX: 640, clientY: 600, bubbles: true }));
+    const aim = getAim();
+    check('touch(aim): aim drag produces a unit aim direction', !!aim && Math.abs(Math.hypot(aim.x, aim.z) - 1) < 1e-3, JSON.stringify(aim));
+    check('touch(aim): holding the aim stick fires', tc.isFiring() === true);
+    aimZone.dispatchEvent(new PointerEvent('pointerup', { pointerId: 20, clientX: 640, clientY: 600, bubbles: true }));
+    check('touch(aim): aim release clears aim + fire', getAim() === null && tc.isFiring() === false);
+    tc.setAimMode(false);
+    check('touch(aim): leaving aim mode drops the layout class',
+      !document.getElementById('touch-layer')!.classList.contains('aim-mode'));
   }
 
   // ---------- Feedback queue ----------

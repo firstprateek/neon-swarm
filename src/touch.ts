@@ -1,4 +1,4 @@
-import { setTouchMove, clearTouchMove } from './input';
+import { setTouchMove, clearTouchMove, setTouchAim, clearTouchAim } from './input';
 
 /**
  * On-screen touch controls: a FLOATING analog joystick (bottom-right) that drives
@@ -19,7 +19,8 @@ export interface TouchControls {
   hide(): void;
   setAbilityState(missiles: number, nukes: number, dashReady: boolean): void;
   setFireVisible(on: boolean): void; // show the FIRE button (auto-fire OFF only)
-  isFiring(): boolean;               // true ONLY while the FIRE button is visible AND held
+  setAimMode(on: boolean): void;     // manual-aim: show the right-thumb aim stick (move moves left)
+  isFiring(): boolean;               // true while the FIRE button OR the aim stick is held
   el: HTMLElement; // exposed for tests
 }
 
@@ -94,6 +95,62 @@ export function createTouch(deps: TouchDeps): TouchControls {
   zone.addEventListener('pointerup', endStick);
   zone.addEventListener('pointercancel', endStick); // iOS edge-swipe steal
 
+  // ---- aim joystick (manual-aim modes; bottom-RIGHT floating, also fires) ----
+  const aimZone = document.getElementById('tc-aim-zone') as HTMLElement;
+  const aimStick = document.getElementById('tc-aim') as HTMLElement;
+  const aimKnob = document.getElementById('tc-aim-knob') as HTMLElement;
+  let aimId = -1;
+  let aimBaseX = 0, aimBaseY = 0;
+  let aimFiring = false;     // touching the aim stick fires (covers Hard's auto-fire-off)
+  const AIM_DEAD = 6;        // px before we trust a direction (no jitter at centre)
+
+  function placeAimBase(px: number, py: number): void {
+    aimBaseX = insetClampX(px); aimBaseY = insetClampY(py);
+    aimStick.style.left = aimBaseX + 'px';
+    aimStick.style.top = aimBaseY + 'px';
+  }
+  function driveAim(px: number, py: number): void {
+    let dx = px - aimBaseX, dy = py - aimBaseY;
+    let dist = Math.hypot(dx, dy);
+    if (dist > R) { // re-center so the knob pins at the rim, like the move stick
+      aimBaseX += dx * (1 - R / dist); aimBaseY += dy * (1 - R / dist);
+      aimStick.style.left = aimBaseX + 'px'; aimStick.style.top = aimBaseY + 'px';
+      dx = px - aimBaseX; dy = py - aimBaseY; dist = R;
+    }
+    aimKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+    if (dist >= AIM_DEAD) setTouchAim(dx, dy); // direction only; keep last aim inside dead zone
+  }
+  aimZone.addEventListener('pointerdown', e => {
+    if (aimId !== -1) return;
+    e.preventDefault(); e.stopPropagation();
+    aimId = e.pointerId;
+    try { aimZone.setPointerCapture(e.pointerId); } catch { /* fast-tap race */ }
+    placeAimBase(e.clientX, e.clientY);
+    aimStick.classList.add('live');
+    aimFiring = true;
+    driveAim(e.clientX, e.clientY);
+  }, { passive: false });
+  aimZone.addEventListener('pointermove', e => {
+    if (e.pointerId !== aimId) return;
+    e.preventDefault();
+    driveAim(e.clientX, e.clientY);
+  }, { passive: false });
+  const endAim = (e: PointerEvent): void => {
+    if (e.pointerId !== aimId) return;
+    aimId = -1;
+    aimStick.classList.remove('live');
+    aimKnob.style.transform = 'translate(0,0)';
+    aimFiring = false;
+    clearTouchAim();
+  };
+  aimZone.addEventListener('pointerup', endAim);
+  aimZone.addEventListener('pointercancel', endAim);
+  const resetAim = (): void => {
+    if (aimId !== -1) { aimId = -1; aimStick.classList.remove('live'); aimKnob.style.transform = 'translate(0,0)'; }
+    aimFiring = false;
+    clearTouchAim();
+  };
+
   // ---- ability buttons (bottom-left) ----
   const wire = (btn: HTMLButtonElement, fn: () => void): void => {
     btn.addEventListener('pointerdown', e => {
@@ -137,6 +194,7 @@ export function createTouch(deps: TouchDeps): TouchControls {
         stick.classList.remove('live');
         knob.style.transform = 'translate(0,0)';
       }
+      resetAim();
       firingHeld = false; bFire.classList.remove('down');
       clearTouchMove(); // MUST clear, or a stale vector drifts the player under an overlay
     },
@@ -145,7 +203,11 @@ export function createTouch(deps: TouchDeps): TouchControls {
       bFire.classList.toggle('tc-hidden', !on);
       if (!on) firingHeld = false;
     },
-    isFiring(): boolean { return fireVisible && firingHeld; },
+    setAimMode(on: boolean): void {
+      root.classList.toggle('aim-mode', on);
+      if (!on) resetAim(); // tearing down — drop any held aim + fire state
+    },
+    isFiring(): boolean { return (fireVisible && firingHeld) || aimFiring; },
     setAbilityState(missiles, nukes, dashReady): void {
       if (missiles !== lastState.m) {
         lastState.m = missiles;
