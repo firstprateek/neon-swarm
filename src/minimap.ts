@@ -35,6 +35,8 @@ export class Minimap {
 
   show(): void { if (!this.shown) { this.shown = true; this.wrap.style.display = 'block'; } }
   hide(): void { if (this.shown) { this.shown = false; this.wrap.style.display = 'none'; } }
+  /** uncover the entire map (the 'padirules' cheat) */
+  revealAll(): void { this.revealCtx.fillStyle = '#fff'; this.revealCtx.fillRect(0, 0, this.size, this.size); }
 
   private px(x: number): number { return (x + HALF) / WORLD * this.size; }
   private py(z: number): number { return (z + HALF) / WORLD * this.size; }

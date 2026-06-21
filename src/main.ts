@@ -396,6 +396,7 @@ async function start() {
   let missileRefillTimer = MISSILE_REFILL;
   let dashCd = 0;     // dash cooldown remaining
   let dashTime = 0;   // dash burst remaining
+  let infinite = false; // 'padirules' cheat: infinite dash + missiles + nukes (topped up each tick)
   let dashDirX = 0, dashDirZ = 1;
   let iframes = 0;    // invulnerability window (during/after dash)
   const DASH_COOLDOWN = 2.2, DASH_TIME = 0.16, DASH_SPEED = 70, DASH_IFRAMES = 0.3;
@@ -479,6 +480,19 @@ async function start() {
     { code: 'horde', effect: () => { for (let i = 0; i < 400; i++) { const a = Math.random() * Math.PI * 2, r = 18 + Math.random() * 40; swarm.spawn((Math.random() * BOSS_TYPE) | 0, player.position.x + Math.cos(a) * r, player.position.z + Math.sin(a) * r); } return 'HORDE SUMMONED'; } },
     { code: 'rich', effect: () => { state.score += 10000; return '+10000 SCORE'; } },
     { code: 'levelup', effect: () => { state.pendingLevels++; return 'LEVEL UP'; } },
+    // the everything cheat: god mode, max level + every attribute maxed, whole map revealed,
+    // infinite dash + missiles + nukes
+    { code: 'padirules', effect: () => {
+      godMode = true; infinite = true;
+      state.dmg = 120; state.fireRate = 16; state.projectiles = 9; state.pierce = 8; state.bulletSpeed = 52;
+      state.moveSpeed = 22; state.magnet = 40; state.regen = 15;
+      state.maxHp = 100000; state.hp = state.maxHp;
+      state.orbitalLevel = 5; state.teslaLevel = 5; state.droneLevel = 6;
+      state.level = 99; state.xp = 0; state.xpNeed = Number.MAX_SAFE_INTEGER; state.pendingLevels = 0; // max level, no more level-ups
+      state.missiles = MISSILE_MAX; state.nukes = NUKE_MAX;
+      minimap.revealAll();
+      return 'PADI RULES 👑 GODLIKE';
+    } },
   ];
   let cheatBuf = '';
   function applyCheat(name: string): string | null {
@@ -906,6 +920,7 @@ async function start() {
 
   // wall-clock ability cooldown + missile refill (unaffected by hit-stop slow-mo)
   function tickRealtime(rdt: number): void {
+    if (infinite) { dashCd = 0; state.missiles = MISSILE_MAX; state.nukes = NUKE_MAX; return; } // 'padirules' top-up
     if (dashCd > 0) dashCd -= rdt;
     if (state.missiles < MISSILE_BASE) {
       missileRefillTimer -= rdt;
