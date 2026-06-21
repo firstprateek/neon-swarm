@@ -454,6 +454,7 @@
 
     #floaters { position: absolute; inset: 0; overflow: hidden; }
     .floater { position: absolute; left: 0; top: 0; display: none; font-size: 22px; font-weight: 700; letter-spacing: 1px; text-shadow: 0 0 8px currentColor; will-change: transform, opacity; }
+    body.touch .floater { font-size: 14px; letter-spacing: 0.5px; } /* smaller score/combo pops on phones */
 
     /* ===================== REDUCED MOTION (must stay LAST) ===================== */
     @media (prefers-reduced-motion: reduce) {
