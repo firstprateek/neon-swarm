@@ -243,6 +243,8 @@
     body.touch .settings-screen { max-height: none; width: 100%; max-width: 420px; }
     body.touch .pause-buttons { flex-direction: column; align-items: stretch; width: 100%; max-width: 340px; gap: 12px; }
     body.touch .pause-buttons button { width: 100%; }
+    /* desktop game-over: equal-width buttons (1fr grid sizes all 3 to the widest) */
+    body:not(.touch) #gameover-overlay .pause-buttons { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; max-width: 94vw; }
 
     /* ---- mobile zoom buttons (top-right, below the gear) ---- */
     #mobile-zoom { position: fixed; top: 70px; right: 14px; z-index: 16; display: none; flex-direction: column; gap: 8px; }
