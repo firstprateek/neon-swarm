@@ -41,9 +41,9 @@ The arena is a finite, collidable post-apocalyptic city, generated from the run'
 
 - **Downtown** (centre, where you spawn) — a tower skyline on a tight road **grid**.
 - **Suburb** (mid ring) — houses and the odd big-box mall, threaded by **winding arterials**.
-- **National park** (outer rim) — sparse ruins among **lakes, mountains, and pine woods**.
+- **National park** (outer rim) — sparse ruins among **lakes, mountains, and pine woods**, the only place still wrapped in eerie haze (the rest of the city is clear).
 
-Six radial spokes tie the zones together. Buildings, terrain, and the boundary wall all block you *and* the horde, so enemies path around them — use them as cover. **~Half of the intact buildings are enterable** (walk through the doorway) and hold a **supply cache**: a health pack (+100 HP), a missile pack (+10), or a nuke. And there are structures to read: **billboards** you walk under, **bridges** you cross over the lakes, and **tunnels** you walk through — a tunnel's roof fades to transparent while you're inside it.
+Six radial spokes tie the zones together. Buildings, terrain, and the boundary wall all block you *and* the horde, so enemies path around them — use them as cover. **~Half of the intact buildings are enterable** (walk through the doorway), each capped by a **see-through roof** — a faint shell from outside that fades nearly clear as you step in, the way a top-down game reveals an interior. Inside sits a **supply cache** with a tell-tale shape: a **medic kit** (+100 HP), a **rocket** (+10 missiles), or a **bomb** (a nuke). And there are structures to read: **billboards** you walk under, **bridges** you cross over the lakes, and **tunnels** you walk through — a tunnel's roof fades to transparent while you're inside it.
 
 ## Control modes
 

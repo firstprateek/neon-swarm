@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import type { SpatialGrid } from './spatial';
 import { HIT_FLASH, type Swarm } from './swarm';
 import type { Particles } from './combat';
@@ -228,5 +229,157 @@ export class Tesla {
       im.addUpdateRange(0, this.segCount * 16);
       im.needsUpdate = true;
     }
+  }
+}
+
+/** colour a primitive in place (position+color only) for merging into a drone body */
+function tintPart(g: THREE.BufferGeometry, r: number, gg: number, b: number): THREE.BufferGeometry {
+  const ng = g.toNonIndexed();
+  g.dispose();
+  ng.deleteAttribute('uv'); ng.deleteAttribute('normal');
+  const n = ng.attributes.position.count;
+  const c = new Float32Array(n * 3);
+  for (let k = 0; k < n; k++) { c[k * 3] = r; c[k * 3 + 1] = gg; c[k * 3 + 2] = b; }
+  ng.setAttribute('color', new THREE.BufferAttribute(c, 3));
+  return ng;
+}
+
+/**
+ * Recon drones: 1–3 companion drones that orbit the player and auto-fire at the
+ * nearest enemy. Leveling speeds their fire, then adds occasional AoE missiles,
+ * then more drones. Instant-hit (like Tesla) with a short cyan tracer per shot;
+ * missiles add an AoE burst. Two InstancedMeshes (bodies + tracers).
+ */
+export class Drones {
+  level = 0;
+  readonly maxDrones: number;
+  readonly body: THREE.InstancedMesh;
+  readonly tracer: THREE.InstancedMesh;
+  private orbit = 0;
+  private readonly cd: Float32Array;
+  private readonly shots: Int32Array;
+  private readonly segMax = 48;
+  private segCount = 0;
+  private readonly life = new Float32Array(this.segMax);
+  private readonly mlife = new Float32Array(this.segMax);
+  private readonly fx = new Float32Array(this.segMax);
+  private readonly fz = new Float32Array(this.segMax);
+  private readonly tx = new Float32Array(this.segMax);
+  private readonly tz = new Float32Array(this.segMax);
+  private readonly tw = new Float32Array(this.segMax);
+
+  constructor(maxDrones: number, scene: THREE.Scene) {
+    this.maxDrones = maxDrones;
+    this.cd = new Float32Array(maxDrones);
+    this.shots = new Int32Array(maxDrones);
+    // body: a small quad-rotor (lit frame + glowing cyan core + 4 rotor discs)
+    const parts: THREE.BufferGeometry[] = [tintPart(new THREE.BoxGeometry(0.85, 0.2, 0.85), 0.42, 0.46, 0.52)];
+    parts.push(tintPart(new THREE.OctahedronGeometry(0.3), 0.5, 0.97, 1.0)); // glowing core
+    for (const [ox, oz] of [[0.5, 0.5], [-0.5, 0.5], [0.5, -0.5], [-0.5, -0.5]])
+      parts.push(tintPart(new THREE.CylinderGeometry(0.26, 0.26, 0.07, 8).translate(ox, 0.12, oz), 0.2, 0.22, 0.26));
+    const bodyGeo = BufferGeometryUtils.mergeGeometries(parts, false);
+    parts.forEach(p => p.dispose());
+    this.body = new THREE.InstancedMesh(bodyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }), maxDrones);
+    this.body.frustumCulled = false; this.body.visible = false;
+    this.body.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    scene.add(this.body);
+    // tracers
+    this.tracer = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0x9bf2ff, toneMapped: false }), this.segMax);
+    this.tracer.frustumCulled = false; this.tracer.visible = false;
+    this.tracer.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    scene.add(this.tracer);
+  }
+
+  /** active drones at the current level (0 = not acquired) */
+  get drones(): number {
+    if (this.level <= 0) return 0;
+    return this.level >= 6 ? 3 : this.level >= 5 ? 2 : 1;
+  }
+
+  private addTracer(fx: number, fz: number, tx: number, tz: number, w: number): void {
+    if (this.segCount >= this.segMax) return;
+    const i = this.segCount++;
+    this.fx[i] = fx; this.fz[i] = fz; this.tx[i] = tx; this.tz[i] = tz; this.tw[i] = w;
+    this.mlife[i] = this.life[i] = 0.12;
+  }
+  private removeSeg(i: number): void {
+    const last = --this.segCount;
+    if (i !== last) {
+      this.fx[i] = this.fx[last]; this.fz[i] = this.fz[last]; this.tx[i] = this.tx[last]; this.tz[i] = this.tz[last];
+      this.tw[i] = this.tw[last]; this.life[i] = this.life[last]; this.mlife[i] = this.mlife[last];
+    }
+  }
+
+  /** AoE damage in a radius (a drone "missile") via the shared spatial grid */
+  private aoe(cx: number, cz: number, R: number, dmg: number, swarm: Swarm, grid: SpatialGrid): void {
+    const { cellStart, indices, dim } = grid;
+    const gcx = grid.cellX(cx), gcz = grid.cellZ(cz), R2 = R * R;
+    for (let gz = Math.max(0, gcz - 2); gz <= Math.min(dim - 1, gcz + 2); gz++) {
+      for (let gx = Math.max(0, gcx - 2); gx <= Math.min(dim - 1, gcx + 2); gx++) {
+        const c = gz * dim + gx;
+        for (let k = cellStart[c]; k < cellStart[c + 1]; k++) {
+          const j = indices[k];
+          if (j >= swarm.count || swarm.hp[j] <= 0) continue;
+          const dx = swarm.posX[j] - cx, dz = swarm.posZ[j] - cz;
+          if (dx * dx + dz * dz < R2) { swarm.hp[j] -= dmg; swarm.flash[j] = HIT_FLASH; }
+        }
+      }
+    }
+  }
+
+  update(dt: number, time: number, px: number, pz: number, swarm: Swarm, grid: SpatialGrid, particles: Particles): void {
+    const n = this.drones;
+    this.body.count = n; this.body.visible = n > 0;
+    if (n > 0) {
+      this.orbit += dt * 1.4;
+      const fireInt = Math.max(0.16, 0.55 - (this.level - 1) * 0.07); // faster each level
+      const dmg = 3 + this.level * 1.6;
+      const bm = this.body.instanceMatrix.array as Float32Array;
+      for (let d = 0; d < n; d++) {
+        const a = this.orbit + (d / n) * Math.PI * 2;
+        const dx = px + Math.cos(a) * 5.2, dz = pz + Math.sin(a) * 5.2;
+        const dy = 3.1 + Math.sin(time * 3 + d) * 0.18;
+        const yaw = a + time * 2, cs = Math.cos(yaw), sn = Math.sin(yaw);
+        const o = d * 16;
+        bm[o] = cs; bm[o + 1] = 0; bm[o + 2] = -sn; bm[o + 3] = 0;
+        bm[o + 4] = 0; bm[o + 5] = 1; bm[o + 6] = 0; bm[o + 7] = 0;
+        bm[o + 8] = sn; bm[o + 9] = 0; bm[o + 10] = cs; bm[o + 11] = 0;
+        bm[o + 12] = dx; bm[o + 13] = dy; bm[o + 14] = dz; bm[o + 15] = 1;
+        this.cd[d] -= dt;
+        if (this.cd[d] <= 0 && swarm.count > 0) {
+          const target = swarm.nearest(dx, dz);
+          if (target >= 0) {
+            this.cd[d] = fireInt;
+            const ex = swarm.posX[target], ez = swarm.posZ[target];
+            if (this.level >= 4 && (++this.shots[d] % 4 === 0)) {        // occasional missile (AoE)
+              this.aoe(ex, ez, 5, 28 + this.level * 8, swarm, grid);
+              particles.burst(ex, swarm.radius[target] + 0.3, ez, new THREE.Color(1, 0.7, 0.3), 16, 11);
+              this.addTracer(dx, dz, ex, ez, 0.32);
+            } else {                                                     // single-target shot
+              swarm.hp[target] -= dmg; swarm.flash[target] = HIT_FLASH;
+              this.addTracer(dx, dz, ex, ez, 0.12);
+            }
+          } else this.cd[d] = 0.08;
+        }
+      }
+      this.body.instanceMatrix.needsUpdate = true;
+    }
+    // age + render tracers as flat oriented thinning boxes (y≈1.9)
+    const tm = this.tracer.instanceMatrix.array as Float32Array;
+    for (let i = this.segCount - 1; i >= 0; i--) {
+      this.life[i] -= dt;
+      if (this.life[i] <= 0) { this.removeSeg(i); continue; }
+      const fade = this.life[i] / this.mlife[i];
+      const ddx = this.tx[i] - this.fx[i], ddz = this.tz[i] - this.fz[i];
+      const L = Math.sqrt(ddx * ddx + ddz * ddz) + 1e-6;
+      const ux = ddx / L, uz = ddz / L, t = this.tw[i] * fade;
+      const o = i * 16;
+      tm[o] = ddx; tm[o + 1] = 0; tm[o + 2] = ddz; tm[o + 3] = 0;
+      tm[o + 4] = 0; tm[o + 5] = t; tm[o + 6] = 0; tm[o + 7] = 0;
+      tm[o + 8] = -uz * t; tm[o + 9] = 0; tm[o + 10] = ux * t; tm[o + 11] = 0;
+      tm[o + 12] = (this.fx[i] + this.tx[i]) * 0.5; tm[o + 13] = 1.9; tm[o + 14] = (this.fz[i] + this.tz[i]) * 0.5; tm[o + 15] = 1;
+    }
+    this.tracer.count = this.segCount; this.tracer.visible = this.segCount > 0;
+    if (this.segCount > 0) this.tracer.instanceMatrix.needsUpdate = true;
   }
 }

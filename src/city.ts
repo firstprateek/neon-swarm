@@ -806,10 +806,11 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
         tr.mat.transparent = tr.alpha < 0.999;
         tr.mat.depthWrite = !tr.mat.transparent;
       }
-      // hollow-building roofs: fade the one you're standing in toward ROOF_IN, others to ROOF_OUT
+      // hollow-building roofs: fade the one you're standing in toward ROOF_IN, others to ROOF_OUT.
+      // Only the transitioning buildings' vert ranges are dirty → upload just that span.
       const rr = roofRT;
       if (rr) {
-        let dirty = false;
+        let dmin = Infinity, dmax = 0;
         for (let i = 0; i < rr.n; i++) {
           const inside = px >= rr.minX[i] && px <= rr.maxX[i] && pz >= rr.minZ[i] && pz <= rr.maxZ[i];
           const a = rr.alpha[i] + ((inside ? ROOF_IN : ROOF_OUT) - rr.alpha[i]) * k;
@@ -817,10 +818,15 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
             rr.alpha[i] = a;
             const s = rr.starts[i], end = s + rr.counts[i];
             for (let v = s; v < end; v++) rr.fade[v] = a;
-            dirty = true;
+            if (s < dmin) dmin = s;
+            if (end > dmax) dmax = end;
           }
         }
-        if (dirty) rr.attr.needsUpdate = true;
+        if (dmax > dmin) {
+          rr.attr.clearUpdateRanges();
+          rr.attr.addUpdateRange(dmin, dmax - dmin); // upload only the changed span
+          rr.attr.needsUpdate = true;
+        }
       }
     },
   };

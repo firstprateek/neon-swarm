@@ -15,7 +15,7 @@ import { generateCity, disposeCity, resolveMove, cellBlocked, type City, type Bl
 import { Bullets, Gems, Particles, Missiles, Drops } from './combat';
 import { Blast } from './fx';
 import { AmbientMotes } from './ambient';
-import { Orbitals, Tesla } from './weapons';
+import { Orbitals, Tesla, Drones } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize, BOSS_INTERVAL } from './director';
 import { createQuality, governQuality, QUALITY_TIERS, MAX_TIER } from './perf';
 import { loadSettings, saveSettings, qualityTier, applyPreset, clampZoom, ZOOM_MAX, ZOOM_DEFAULT, type Settings, type QualityMode } from './settings';
@@ -266,6 +266,7 @@ async function start() {
   const ambient = new AmbientMotes(260, scene); // drifting ash + embers (tiered in applyQuality)
   const orbitals = new Orbitals(6, scene);
   const tesla = new Tesla(64, scene);
+  const drones = new Drones(3, scene);
   const grid = new SpatialGrid(2.5, 96, MAX_ENEMIES);
 
   // --- post-processing bloom + post-apoc color grade, validated before use ---
@@ -442,7 +443,7 @@ async function start() {
   // --- cheat codes: type the sequence anytime ---
   const cheats: { code: string; effect: () => string }[] = [
     { code: 'god', effect: () => { godMode = !godMode; return godMode ? 'GOD MODE ON' : 'GOD MODE OFF'; } },
-    { code: 'guns', effect: () => { state.dmg = 80; state.fireRate = 14; state.projectiles = 8; state.pierce = 6; state.bulletSpeed = 48; state.orbitalLevel = 5; state.teslaLevel = 5; return 'MAX WEAPONS'; } },
+    { code: 'guns', effect: () => { state.dmg = 80; state.fireRate = 14; state.projectiles = 8; state.pierce = 6; state.bulletSpeed = 48; state.orbitalLevel = 5; state.teslaLevel = 5; state.droneLevel = 6; return 'MAX WEAPONS'; } },
     { code: 'tank', effect: () => { state.maxHp += 200; state.hp = state.maxHp; return '+200 MAX HP'; } },
     { code: 'boss', effect: () => { spawnBoss(); return 'BOSS SUMMONED'; } },
     { code: 'horde', effect: () => { for (let i = 0; i < 400; i++) { const a = Math.random() * Math.PI * 2, r = 18 + Math.random() * 40; swarm.spawn((Math.random() * BOSS_TYPE) | 0, player.position.x + Math.cos(a) * r, player.position.z + Math.sin(a) * r); } return 'HORDE SUMMONED'; } },
@@ -952,7 +953,7 @@ async function start() {
   // step() drives the real update/render path with a fixed dt so tests
   // stay deterministic even where rAF is throttled (hidden/headless tabs)
   (window as unknown as Record<string, unknown>).__dbg = {
-    state, swarm, bullets, gems, particles, orbitals, tesla, player, camera, upgrades: UPGRADES,
+    state, swarm, bullets, gems, particles, orbitals, tesla, drones, player, camera, upgrades: UPGRADES,
     spawnBoss,
     bosses: () => ({ active: activeBosses, spawned: bossesSpawned }),
     flags: () => ({ started, over, leveling, paused }),
@@ -1118,6 +1119,8 @@ async function start() {
     orbitals.update(dt, state.time, player.position.x, player.position.z, swarm, grid);
     tesla.level = state.teslaLevel;
     tesla.update(dt, player.position.x, player.position.z, swarm, grid, particles);
+    drones.level = state.droneLevel;
+    drones.update(dt, state.time, player.position.x, player.position.z, swarm, grid, particles);
 
     swarm.sweepDead((x, z, xp, type) => {
       state.kills++;

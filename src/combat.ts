@@ -686,7 +686,7 @@ export class Drops {
     for (let t = 0; t < 3; t++) {
       const im = this.meshes[t];
       im.count = counts[t]; im.visible = counts[t] > 0;
-      im.instanceMatrix.needsUpdate = true;
+      if (counts[t] > 0) im.instanceMatrix.needsUpdate = true; // skip the upload for empty types
     }
   }
 
