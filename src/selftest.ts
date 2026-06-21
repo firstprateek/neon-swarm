@@ -24,7 +24,7 @@ import { defaultSettings, mergeSettings, qualityTier, applyPreset } from './sett
 import { presetFlags, flagsToPreset, coerceDifficulty } from './modes';
 import { defaultKeys, mergeKeys, KEY_ACTIONS, resolveAction, isDown, keyLabel, isBindable } from './keybind';
 import { AVATARS, makeSurvivor } from './avatars';
-import { createState, grantXp, xpForLevel, rollUpgrades, registerKill, tickCombo, comboMultiplier, SCORE_BY_TYPE, UPGRADES } from './state';
+import { createState, grantXp, xpForLevel, rollUpgrades, registerKill, tickCombo, comboMultiplier, SCORE_BY_TYPE, ammoDropFor, UPGRADES } from './state';
 import { getMove, getAim, setTouchMove, clearTouchMove } from './input';
 import { createTouch } from './touch';
 import { submitFeedback, pendingFeedback, type FeedbackCtx } from './feedback';
@@ -675,6 +675,12 @@ function run(): void {
     check('score: combo persists within the window', s.combo > 0);
     tickCombo(s, 5.0);
     check('score: combo resets after the window lapses', s.combo === 0 && s.comboTimer === 0);
+
+    // ammo drops from tough enemies
+    check('drops: shambler/runner drop no ammo', ammoDropFor(0).missiles === 0 && ammoDropFor(1).missiles === 0);
+    check('drops: brute drops 1 missile', ammoDropFor(2).missiles === 1 && ammoDropFor(2).nukes === 0);
+    check('drops: heavy drops 2 missiles', ammoDropFor(3).missiles === 2 && ammoDropFor(3).nukes === 0);
+    check('drops: boss drops 10 missiles + 1 nuke', ammoDropFor(4).missiles === 10 && ammoDropFor(4).nukes === 1);
   }
 
   // ---------- Hit-flash ----------

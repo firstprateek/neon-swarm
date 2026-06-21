@@ -2,8 +2,8 @@ import * as THREE from 'three/webgpu';
 import { pass, uniform, mix, vec3, screenUV, luminance, clamp, oneMinus,
   Fn, positionWorld, color, smoothstep, mx_fractal_noise_float, mx_noise_float } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
-import { createState, grantXp, rollUpgrades, registerKill, tickCombo, UPGRADES,
-  MISSILE_MAX, NUKE_MAX, MISSILE_REFILL, MISSILE_DMG, MISSILE_AOE, NUKE_DMG } from './state';
+import { createState, grantXp, rollUpgrades, registerKill, tickCombo, UPGRADES, ammoDropFor,
+  MISSILE_BASE, MISSILE_MAX, NUKE_MAX, MISSILE_REFILL, MISSILE_DMG, MISSILE_AOE, NUKE_DMG } from './state';
 import { getMove, getAim, isAimActive, setTouchMove, clearTouchMove, setMouseAim, setKeyMap, heldKeys } from './input';
 import { resolveAction, isDown, defaultKeys, isBindable, keyLabel, KEY_ACTIONS, ACTION_LABELS, type KeyAction } from './keybind';
 import { type Difficulty, DIFFICULTIES, flagsToPreset, coerceDifficulty } from './modes';
@@ -872,11 +872,11 @@ async function start() {
   // wall-clock ability cooldown + missile refill (unaffected by hit-stop slow-mo)
   function tickRealtime(rdt: number): void {
     if (dashCd > 0) dashCd -= rdt;
-    if (state.missiles < MISSILE_MAX) {
+    if (state.missiles < MISSILE_BASE) {
       missileRefillTimer -= rdt;
       if (missileRefillTimer <= 0) { state.missiles++; missileRefillTimer = MISSILE_REFILL; }
     } else {
-      missileRefillTimer = MISSILE_REFILL; // primed at max so the next drop starts a fresh timer
+      missileRefillTimer = MISSILE_REFILL; // primed; kill-drops can stockpile past the base
     }
   }
 
@@ -1119,6 +1119,14 @@ async function start() {
       state.kills++;
       registerKill(state, type); // combo + score
       const t = ENEMY_TYPES[type];
+      // ammo DROPS from the tough enemies: brute +1 missile, heavy +2, boss +10 + a nuke
+      const drop = ammoDropFor(type);
+      if (drop.missiles || drop.nukes) {
+        state.missiles = Math.min(MISSILE_MAX, state.missiles + drop.missiles);
+        state.nukes = Math.min(NUKE_MAX, state.nukes + drop.nukes);
+        const sp = projectToScreen(x, t.radius + 1.5, z);
+        if (sp) hud.floatText(sp.sx, sp.sy, drop.nukes ? `+${drop.missiles} 🚀  +${drop.nukes} ☢` : `+${drop.missiles} 🚀`, '#7af3ff');
+      }
       if (type === BOSS_TYPE) {
         activeBosses--;
         // bosses pay out a cluster of gems and a big explosion
@@ -1129,10 +1137,7 @@ async function start() {
         addShake(1.4);
         hitStop = 0.12; // punchy micro-freeze on the kill
         sfx.sfxBossDie();
-        // boss reward: restock the active-ability arsenal
-        state.missiles = MISSILE_MAX;
-        if (state.nukes < NUKE_MAX) state.nukes++;
-        hud.toast('BOSS DOWN — ARSENAL RESTOCKED');
+        hud.toast('BOSS DOWN — +10 🚀  +1 ☢');
       } else {
         gems.spawn(x, z, xp);
         particles.burst(x, t.radius, z, t.color, type >= 2 ? 26 : 10);

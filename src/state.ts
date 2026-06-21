@@ -60,12 +60,22 @@ export function createState(): GameState {
 }
 
 // active-ability tuning
-export const MISSILE_MAX = 6;
-export const NUKE_MAX = 3;
+export const MISSILE_BASE = 6;    // passive trickle-refill tops up to here
+export const MISSILE_MAX = 30;    // hard cap incl. kill drops (lets you stockpile)
+export const NUKE_MAX = 10;
 export const MISSILE_REFILL = 11; // seconds per regained missile
 export const MISSILE_DMG = 55;
 export const MISSILE_AOE = 6.5;
 export const NUKE_DMG = 100000; // effectively clears the screen
+
+/** ammo a kill drops by enemy-type index: brute(2)=1 missile, heavy(3)=2,
+ *  boss(4)=10 missiles + 1 nuke; everything else drops nothing. */
+export function ammoDropFor(type: number): { missiles: number; nukes: number } {
+  if (type === 2) return { missiles: 1, nukes: 0 };  // brute
+  if (type === 3) return { missiles: 2, nukes: 0 };  // heavy
+  if (type === 4) return { missiles: 10, nukes: 1 }; // boss
+  return { missiles: 0, nukes: 0 };
+}
 
 /** base score per enemy type index (grunt, runner, tank, elite, boss) —
  * tougher/faster enemies reward more (runner > grunt, per playtest feedback) */
