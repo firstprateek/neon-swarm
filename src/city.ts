@@ -62,6 +62,8 @@ export interface City {
   seed: number;
   zoneAt(x: number, z: number): Zone; // downtown / suburb / park at a world point
   warp: ZoneWarp;                     // the seed's zone-ring warp coeffs (for the ground shader)
+  groundHeight(x: number, z: number): number; // render elevation (climbable mountain); 0 elsewhere
+  climb: { x: number; z: number; r: number; h: number }; // the climbable mountain (for the swarm)
   setVisualTier(tier: number): void;
   updateTunnels(px: number, pz: number, dt: number): void;
   faceSigns(cx: number, cy: number, cz: number): void; // turn the gateway signs to face the camera
@@ -322,6 +324,16 @@ export interface WarpCoeffs { a1: number; a2: number; a3: number; p1: number; p2
 export interface ZoneWarp { lo: WarpCoeffs; hi: WarpCoeffs; }
 export const ZONE = { R0_BASE: 200, R0_AMP: 34, R1_BASE: 400, R1_AMP: 52 } as const;
 
+// a single CLIMBABLE mountain in the park: a walkable cone you ascend to the peak.
+// It is NEVER baked into the collision grid (movement stays flat XZ); the elevation is
+// a pure render offset the player, camera, and swarm all follow via climbHeight().
+export const CLIMB = { x: -330, z: -330, r: 62, h: 26 } as const;
+export function climbHeight(x: number, z: number): number {
+  const dx = x - CLIMB.x, dz = z - CLIMB.z;
+  const d = Math.sqrt(dx * dx + dz * dz);
+  return d >= CLIMB.r ? 0 : CLIMB.h * (1 - d / CLIMB.r); // linear cone (matches the ConeGeometry mesh)
+}
+
 const TWO_PI = Math.PI * 2;
 function warpVal(th: number, c: WarpCoeffs): number {
   return c.a1 * Math.sin(th + c.p1) + c.a2 * Math.sin(2 * th + c.p2) + c.a3 * Math.sin(3 * th + c.p3);
@@ -552,7 +564,7 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
   for (let i = 0; i < 8; i++) {
     const ang = rng() * TWO_PI, rad = parkLo + rng() * parkSpan, r = 20 + rng() * 12;
     const x = Math.cos(ang) * rad, z = Math.sin(ang) * rad;
-    if (lakeN < 2 && zone(x, z) === Zone.Park && !onRoad(x, z, bigRoads, r + 8)) {
+    if (lakeN < 2 && zone(x, z) === Zone.Park && !onRoad(x, z, bigRoads, r + 8) && Math.hypot(x - CLIMB.x, z - CLIMB.z) > CLIMB.r + r + 14) {
       push(x - r, z - r, x + r, z + r, ObsFlag.SOLID, 0.5, Kind.Water);
       lakes.push({ x, z, r }); lakeN++;
     }
@@ -562,7 +574,7 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
   for (let i = 0; i < 10; i++) {
     const ang = rng() * TWO_PI, rad = parkLo + rng() * parkSpan, r = 24 + rng() * 14, mh = 40 + rng() * 30;
     const x = Math.cos(ang) * rad, z = Math.sin(ang) * rad;
-    if (mtnN < 4 && zone(x, z) === Zone.Park && !onRoad(x, z, bigRoads, r + 10)) {
+    if (mtnN < 4 && zone(x, z) === Zone.Park && !onRoad(x, z, bigRoads, r + 10) && Math.hypot(x - CLIMB.x, z - CLIMB.z) > CLIMB.r + r + 14) {
       push(x - r, z - r, x + r, z + r, ObsFlag.SOLID, mh, Kind.Mountain);
       mountains.push({ x, z, r, h: mh }); mtnN++;
     }
@@ -571,7 +583,7 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
   for (let g = 0; g < 6; g++) {
     const gang = rng() * TWO_PI, grad = parkLo + rng() * parkSpan;
     const gx = Math.cos(gang) * grad, gz = Math.sin(gang) * grad;
-    const groveOk = zone(gx, gz) === Zone.Park;
+    const groveOk = zone(gx, gz) === Zone.Park && Math.hypot(gx - CLIMB.x, gz - CLIMB.z) > CLIMB.r + 40;
     for (let k = 0; k < 12; k++) {
       const ox = (rng() - 0.5) * 50, oz = (rng() - 0.5) * 50, tr = 1.2 + rng() * 0.8, th = 5 + rng() * 5;
       const tx = gx + ox, tz = gz + oz;
@@ -790,6 +802,31 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     meshes.push(water);
   }
 
+  // CLIMBABLE MOUNTAIN — a walkable rocky cone + a dirt trail straight up + bushes on the slope
+  if (!skipMeshes) {
+    const mt = KIND_TINT[Kind.Mountain];
+    const cone = paint(new THREE.ConeGeometry(CLIMB.r, CLIMB.h, 24).translate(CLIMB.x, CLIMB.h / 2, CLIMB.z), mt[0] * 0.95, mt[1], mt[2] * 0.9);
+    const slope = Math.sqrt(CLIMB.r * CLIMB.r + CLIMB.h * CLIMB.h);
+    const trail = paint(new THREE.BoxGeometry(slope, 0.4, 7).rotateZ(Math.atan2(CLIMB.h, -CLIMB.r)).translate(CLIMB.x + CLIMB.r / 2, CLIMB.h / 2 + 0.25, CLIMB.z), 0.26, 0.21, 0.13);
+    const merged = BufferGeometryUtils.mergeGeometries([cone, trail], false);
+    cone.dispose(); trail.dispose();
+    const cmesh = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0x0a0c08, flatShading: true }));
+    cmesh.frustumCulled = false;
+    meshes.push(cmesh);
+    // bushes along the slope (small green clumps sitting on the cone surface)
+    const bushParts: THREE.BufferGeometry[] = [];
+    for (let b = 0; b < 16; b++) {
+      const a = b * 2.39996, rr = CLIMB.r * (0.22 + (b % 5) * 0.15); // golden-angle spiral up the cone
+      const bx = CLIMB.x + Math.cos(a) * rr, bz = CLIMB.z + Math.sin(a) * rr, bs = 1.3 + (b % 3) * 0.5;
+      bushParts.push(paint(new THREE.IcosahedronGeometry(bs, 0).translate(bx, climbHeight(bx, bz) + bs * 0.55, bz), 0.12, 0.32, 0.13));
+    }
+    const bmerged = BufferGeometryUtils.mergeGeometries(bushParts, false);
+    bushParts.forEach(p => p.dispose());
+    const bmesh = new THREE.Mesh(bmerged, new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0x070d07, flatShading: true }));
+    bmesh.frustumCulled = false;
+    meshes.push(bmesh); cosmetic.push(bmesh); // bushes drop on low tier
+  }
+
   // structures: bridge decks + rails + billboard posts/signs → ONE merged Lambert mesh
   if (!skipMeshes && (bridges.length > 0 || billboards.length > 0)) {
     const parts: THREE.BufferGeometry[] = [];
@@ -933,6 +970,8 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     obstacles, blockGrid, drops, meshes, seed,
     zoneAt(x: number, z: number): Zone { return zoneAt(x, z, warp); },
     warp,
+    groundHeight(x: number, z: number): number { return climbHeight(x, z); },
+    climb: { x: CLIMB.x, z: CLIMB.z, r: CLIMB.r, h: CLIMB.h },
     faceSigns(cx: number, cy: number, cz: number): void {
       for (let i = 0; i < signMeshes.length; i++) signMeshes[i].lookAt(cx, cy, cz); // always readable, any approach
     },

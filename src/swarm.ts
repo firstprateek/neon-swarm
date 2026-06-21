@@ -88,6 +88,11 @@ export class Swarm {
   count = 0;
   private blockGrid: BlockGrid | null = null; // city collision; spawns relocate out of buildings
   setBlockGrid(g: BlockGrid | null): void { this.blockGrid = g; }
+  // climbable-mountain elevation so enemies render on the slope as they chase you up it
+  private climbX = 0; private climbZ = 0; private climbR2 = 0; private climbInvR = 0; private climbH = 0;
+  setClimb(x: number, z: number, r: number, h: number): void {
+    this.climbX = x; this.climbZ = z; this.climbR2 = r * r; this.climbInvR = 1 / r; this.climbH = h;
+  }
 
   readonly posX: Float32Array;
   readonly posZ: Float32Array;
@@ -312,7 +317,13 @@ export class Swarm {
       m[o + 5] = sc;
       m[o + 8] = ux * sc; m[o + 10] = uz * sc;
       m[o + 12] = nx;
-      m[o + 13] = r * pulse[bob[i]];
+      // climbable mountain: lift enemies onto the cone slope (cheap distance check; 0 for the far majority)
+      let gy = 0;
+      if (this.climbH > 0) {
+        const cdx = nx - this.climbX, cdz = nz - this.climbZ, cd2 = cdx * cdx + cdz * cdz;
+        if (cd2 < this.climbR2) gy = this.climbH * (1 - Math.sqrt(cd2) * this.climbInvR);
+      }
+      m[o + 13] = r * pulse[bob[i]] + gy;
       m[o + 14] = nz;
 
       // hit-flash: blend toward white while active, snap back to base when done

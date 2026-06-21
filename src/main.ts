@@ -272,6 +272,7 @@ async function start() {
     city = generateCity(getSeed(), isTouch);
     blockGrid = city.blockGrid;
     swarm.setBlockGrid(blockGrid); // relocate any spawn that lands in a building
+    swarm.setClimb(city.climb.x, city.climb.z, city.climb.r, city.climb.h); // enemies climb the mountain too
     for (const m of city.meshes) scene.add(m);
     city.setVisualTier(quality.tier);
     drops.load(city.drops.x, city.drops.z, city.drops.type, city.drops.count); // supply caches
@@ -1090,10 +1091,13 @@ async function start() {
       if (held.has('Equal') || held.has('NumpadAdd')) settings.zoom = clampZoom(settings.zoom - zr);
       if (held.has('Minus') || held.has('NumpadSubtract')) settings.zoom = clampZoom(settings.zoom + zr);
     }
+    // climbable-mountain elevation: the player + camera rise with the terrain (0 on flat ground)
+    const gh = city ? city.groundHeight(player.position.x, player.position.z) : 0;
+    player.position.y = gh;
     // zoom = dolly the follow-cam along its angle (height 26 + back 15 scaled together)
     const zlerp = Math.min(1, dt * 5);
     camera.position.x += (player.position.x - camera.position.x) * zlerp;
-    camera.position.y += (26 * settings.zoom - camera.position.y) * zlerp;
+    camera.position.y += (26 * settings.zoom + gh - camera.position.y) * zlerp;
     camera.position.z += (player.position.z + 15 * settings.zoom - camera.position.z) * zlerp;
     // fog only in the national park (Zone.Park === 2): cross-fade the density as you cross in/out
     const inPark = city ? city.zoneAt(player.position.x, player.position.z) === 2 : false;
@@ -1105,7 +1109,7 @@ async function start() {
       camera.position.z += (Math.random() * 2 - 1) * shake;
       shake *= Math.pow(0.012, dt); // fast decay
     }
-    camera.lookAt(player.position.x, 0, player.position.z);
+    camera.lookAt(player.position.x, gh, player.position.z); // track the player up the climbable mountain
 
     grid.build(swarm.posX, swarm.posZ, swarm.count, player.position.x, player.position.z);
     const damage = swarm.update(dt, state.time, player.position.x, player.position.z, grid, blockGrid);

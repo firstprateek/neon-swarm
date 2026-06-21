@@ -41,7 +41,9 @@ The arena is a finite, collidable post-apocalyptic city, generated from the run'
 
 - **Downtown** (centre, where you spawn) — a tower skyline on a tight road **grid**.
 - **Suburb** (mid ring) — houses, a landmark **shopping mall with a huge parking lot**, threaded by **winding arterials**.
-- **National park** (outer rim) — sparse ruins among **lakes, mountains, and pine woods**, laced with **winding dirt hiking trails** (not roads) and still wrapped in eerie haze (the rest of the city is clear).
+- **National park** (outer rim) — sparse ruins among **lakes, mountains, and pine woods**, laced with **winding dirt hiking trails** (not roads) and still wrapped in eerie haze (the rest of the city is clear). One peak is a **climbable mountain** — a bushy cone with a trail straight to the summit that you (and the chasing horde) actually ascend.
+
+Each zone even has its own ground: cool **concrete** downtown, dusty **tan** in the suburb, green **grass** in the park.
 
 A glowing **gateway sign** announces each zone — **NEON DOWNTOWN**, **NEON SUBURB**, **NEON NATIONAL PARK** — turning to face you as you pass.
 
