@@ -4,7 +4,7 @@ import { pass, uniform, mix, vec3, screenUV, luminance, clamp, oneMinus,
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { createState, grantXp, rollUpgrades, registerKill, tickCombo, UPGRADES,
   MISSILE_MAX, NUKE_MAX, MISSILE_REFILL, MISSILE_DMG, MISSILE_AOE, NUKE_DMG } from './state';
-import { getMove, setTouchMove, clearTouchMove, setKeyMap, heldKeys } from './input';
+import { getMove, getAim, setTouchMove, clearTouchMove, setMouseAim, setKeyMap, heldKeys } from './input';
 import { resolveAction, isDown, defaultKeys, isBindable, keyLabel, KEY_ACTIONS, ACTION_LABELS, type KeyAction } from './keybind';
 import { type Difficulty, DIFFICULTIES, flagsToPreset, coerceDifficulty } from './modes';
 import { createTouch } from './touch';
@@ -819,6 +819,29 @@ async function start() {
   }, { passive: false });
   window.addEventListener('keyup', e => { if (ZOOM_KEYS.has(e.code)) saveSettings(settings); });
 
+  // desktop MOUSE AIM: unproject the cursor onto the ground (y=0) through the LIVE
+  // camera each move, so aim is correct at every zoom; LMB hold-fires, RMB launches a missile.
+  if (!isTouch) {
+    const _ray = new THREE.Raycaster();
+    const _ndc = new THREE.Vector2();
+    const _ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const _hit = new THREE.Vector3();
+    window.addEventListener('pointermove', e => {
+      _ndc.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+      _ray.setFromCamera(_ndc, camera);
+      if (_ray.ray.intersectPlane(_ground, _hit)) setMouseAim(_hit.x - player.position.x, _hit.z - player.position.z);
+    });
+    const canvas = renderer.domElement;
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+    canvas.addEventListener('pointerdown', e => {
+      if (!canAct()) return;
+      if (e.button === 0) setFireHeld(true);              // LMB = hold to fire
+      else if (e.button === 2) { e.preventDefault(); fireMissile(); } // RMB = missile
+    });
+    window.addEventListener('pointerup', e => { if (e.button === 0) setFireHeld(false); });
+    window.addEventListener('blur', () => setFireHeld(false));
+  }
+
   // wall-clock ability cooldown + missile refill (unaffected by hit-stop slow-mo)
   function tickRealtime(rdt: number): void {
     if (dashCd > 0) dashCd -= rdt;
@@ -912,7 +935,8 @@ async function start() {
     missiles, fireMissile, fireNuke, doDash,
     blast, blastActive: () => blast.active,
     touch, canAct, setTouchMove, clearTouchMove, getMove,
-    fireVolley, setFireHeld,
+    fireVolley, setFireHeld, getAim, setMouseAim,
+    facing: () => facing,
     controls: () => ({ autoFire: settings.autoFire, gunLock: settings.gunLock, missileLock: settings.missileLock }),
     setControls: (p: Partial<Pick<Settings, 'autoFire' | 'gunLock' | 'missileLock'>>) => Object.assign(settings, p),
     isFiring: () => touch?.isFiring() ?? false,
@@ -973,7 +997,14 @@ async function start() {
       player.position.x += dashDirX * DASH_SPEED * dt;
       player.position.z += dashDirZ * DASH_SPEED * dt;
     }
-    if (mv.x !== 0 || mv.z !== 0) {
+    // facing: in MANUAL aim modes (gunLock off) the body faces the AIM input
+    // (mouse / aim-stick) — true twin-stick; otherwise it follows movement.
+    const am = settings.gunLock ? null : getAim();
+    if (am) {
+      facing = Math.atan2(am.x, am.z); // mouse/stick is already smooth → snap
+      player.rotation.y = facing;
+      player.rotation.z = -mv.x * 0.12; // lean still follows movement
+    } else if (mv.x !== 0 || mv.z !== 0) {
       const target = Math.atan2(mv.x, mv.z);
       let delta = target - facing;
       while (delta > Math.PI) delta -= Math.PI * 2;

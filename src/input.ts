@@ -30,6 +30,35 @@ export function setTouchMove(x: number, z: number): void {
 export function clearTouchMove(): void { touchActive = false; touchX = 0; touchZ = 0; }
 export function isTouchMoveActive(): boolean { return touchActive; }
 
+// --- aim override: decoupled from movement (twin-stick). mobile aim-stick > mouse. ---
+let touchAimActive = false, touchAimX = 0, touchAimZ = 0;
+let mouseAimActive = false, mouseAimX = 0, mouseAimZ = 0;
+
+/** mobile right-stick aim (world axes; magnitude ignored — direction only) */
+export function setTouchAim(x: number, z: number): void {
+  const len = Math.hypot(x, z);
+  touchAimActive = len > 0.001;
+  if (touchAimActive) { touchAimX = x / len; touchAimZ = z / len; }
+}
+export function clearTouchAim(): void { touchAimActive = false; }
+
+/** desktop mouse aim (world-space cursor direction from the player; main.ts raycasts) */
+export function setMouseAim(x: number, z: number): void {
+  const len = Math.hypot(x, z);
+  if (len < 1e-4) return;
+  mouseAimX = x / len; mouseAimZ = z / len; mouseAimActive = true;
+}
+export function clearMouseAim(): void { mouseAimActive = false; }
+
+const aim = { x: 0, z: 0 };
+/** unit aim direction, or null when no manual aim is active (caller then holds last facing) */
+export function getAim(): { x: number; z: number } | null {
+  if (touchAimActive) { aim.x = touchAimX; aim.z = touchAimZ; return aim; }
+  if (mouseAimActive) { aim.x = mouseAimX; aim.z = mouseAimZ; return aim; }
+  return null;
+}
+export function isAimActive(): boolean { return touchAimActive || mouseAimActive; }
+
 export function getMove(): { x: number; z: number } {
   // analog touch wins when present — reaches movement, facing and dash direction for free
   if (touchActive) { move.x = touchX; move.z = touchZ; return move; }
