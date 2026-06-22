@@ -230,8 +230,11 @@ function reachableFromOrigin(g: BlockGrid): number {
 //      boxes/prisms. Each part is world-positioned + vertex-coloured and folded into
 //      the single building mesh (1 draw call). Collision stays the AABB footprint. ---
 function paint(g: THREE.BufferGeometry, r: number, gg: number, b: number): THREE.BufferGeometry {
-  const ng = g.toNonIndexed(); // non-indexed → crisp flat-shaded faces + safe merge
-  g.dispose();
+  // non-indexed → crisp flat-shaded faces + safe merge. Skip (and don't dispose)
+  // when the input is already non-indexed — toNonIndexed() would warn and return
+  // the SAME geometry, so disposing it would free the one we keep using.
+  const ng = g.index ? g.toNonIndexed() : g;
+  if (ng !== g) g.dispose();
   const n = ng.attributes.position.count;
   const c = new Float32Array(n * 3);
   for (let k = 0; k < n; k++) { c[k * 3] = r; c[k * 3 + 1] = gg; c[k * 3 + 2] = b; }
@@ -730,8 +733,11 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     const attr = new THREE.BufferAttribute(fade, 1);
     attr.setUsage(THREE.DynamicDrawUsage);
     merged.setAttribute('fade', attr);
-    const rmat = new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, depthWrite: false, emissive: 0x0b0d12 });
-    (rmat as unknown as { opacityNode: unknown }).opacityNode = attribute('fade'); // per-vertex opacity → per-building fade
+    // MeshBasic (unlit) NODE material: Lambert does per-vertex (Gouraud) lighting, which packs every
+    // scene light into the vertex shader's UBO and overflowed GL_MAX_UNIFORM_BLOCK_SIZE (16384) on
+    // WebGL2. The roof is a dim transparent fade slab — it needs no lighting, only its 'fade' opacity.
+    const rmat = new THREE.MeshBasicNodeMaterial({ vertexColors: true, transparent: true, depthWrite: false });
+    rmat.opacityNode = attribute('fade'); // per-vertex opacity → per-building fade
     const rmesh = new THREE.Mesh(merged, rmat);
     rmesh.frustumCulled = false; rmesh.renderOrder = 4;
     meshes.push(rmesh);

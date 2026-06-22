@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { pass, uniform, mix, vec3, screenUV, luminance, clamp, oneMinus,
   Fn, positionWorld, color, smoothstep, mx_fractal_noise_float, mx_noise_float,
-  float, sin, atan2, length } from 'three/tsl';
+  float, sin, atan, length } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { createState, grantXp, rollUpgrades, registerKill, tickCombo, UPGRADES, ammoDropFor,
   MISSILE_BASE, MISSILE_MAX, NUKE_MAX, MISSILE_REFILL, MISSILE_DMG, MISSILE_AOE, NUKE_DMG } from './state';
@@ -32,6 +32,36 @@ import * as sfx from './sfx';
 import * as hud from './hud';
 
 const MAX_ENEMIES = 20000;
+
+// --- WebGL2 instancing fix (three r172) -------------------------------------
+// three's InstanceNode packs an InstancedMesh's transforms into ONE uniform
+// buffer when the instance count is <= 1000, sizing the block to the mesh's
+// capacity (count * mat4 = count * 64 bytes). three's threshold assumes a 64KB
+// UBO limit, but WebGL2's guaranteed GL_MAX_UNIFORM_BLOCK_SIZE is only 16384
+// bytes (256 mat4s). So on the WebGL2 fallback every InstancedMesh with a
+// capacity in 257..1000 fails to validate its VERTEX program and floods the
+// console (the 260-mote ambient field, the city's road/trail layers, ...).
+// Fix: on the WebGL2 backend only, force three down its instanced-ATTRIBUTE
+// path (what it already uses for >1000 instances, correct for any draw count)
+// for any mesh whose matrix UBO would overflow. WebGPU keeps the UBO path.
+const UBO_MAT4_CAPACITY = 256; // 256 * 64 = 16384 = GL_MAX_UNIFORM_BLOCK_SIZE
+{
+  type In = { count: number; instanceMatrix: { count: number } | null; instanceMatrixNode: unknown };
+  type Bld = { renderer?: { backend?: { isWebGPUBackend?: boolean } } };
+  const proto = (THREE.InstanceNode as unknown as { prototype: { setup(b: Bld): unknown } }).prototype;
+  const origSetup = proto.setup;
+  proto.setup = function (this: In, builder: Bld) {
+    const isWebGL = builder?.renderer?.backend?.isWebGPUBackend !== true;
+    const capacity = this.instanceMatrix ? this.instanceMatrix.count : 0;
+    if (isWebGL && this.instanceMatrixNode === null && capacity > UBO_MAT4_CAPACITY) {
+      const saved = this.count;
+      this.count = 1001; // > 1000 makes three choose the instanced-attribute path
+      try { return origSetup.call(this, builder); }
+      finally { this.count = saved; }
+    }
+    return origSetup.call(this, builder);
+  };
+}
 
 async function makeRenderer(forceWebGL: boolean): Promise<THREE.WebGPURenderer> {
   const renderer = new THREE.WebGPURenderer({ antialias: true, alpha: false, forceWebGL });
@@ -180,7 +210,7 @@ async function start() {
   try {
     const groundColor = Fn(() => {
       const p = positionWorld.xz;
-      const d = length(p), th = atan2(p.y, p.x);
+      const d = length(p), th = atan(p.y, p.x);
       // warped zone radii — must mirror city.zoneAt (R0_BASE 200 ±34, R1_BASE 400 ±52)
       const warpLo = wLoA.x.mul(sin(th.add(wLoP.x))).add(wLoA.y.mul(sin(th.mul(2).add(wLoP.y)))).add(wLoA.z.mul(sin(th.mul(3).add(wLoP.z))));
       const warpHi = wHiA.x.mul(sin(th.add(wHiP.x))).add(wHiA.y.mul(sin(th.mul(2).add(wHiP.y)))).add(wHiA.z.mul(sin(th.mul(3).add(wHiP.z))));
@@ -206,16 +236,22 @@ async function start() {
       const scorch = smoothstep(0.22, 0.04, splotch).mul(uDetail).mul(builtUp);
       return mix(bloodied, color(0x0a0604), scorch.mul(0.6));            // char / burn
     });
-    const m = new THREE.MeshStandardNodeMaterial({ roughness: 1.0, metalness: 0.0 });
+    // MeshBasic (not Standard) NodeMaterial: a flat top-down ground needs no PBR, and the full
+    // PBR uniform block + our custom warp/zone uniforms overflowed GL_MAX_UNIFORM_BLOCK_SIZE (16384)
+    // on WebGL2 (console spam + a latent black ground on stricter GPUs). Basic keeps us well under.
+    const m = new THREE.MeshBasicNodeMaterial();
     m.colorNode = groundColor();
     groundMat = m;
   } catch (err) {
     console.warn('[neon-swarm] procedural ground unavailable, using flat:', err);
-    groundMat = new THREE.MeshStandardMaterial({ color: 0x14110c, roughness: 1 });
+    groundMat = new THREE.MeshBasicMaterial({ color: 0x14110c });
   }
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1200), groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.03;
+  // the rotated 1200×1200 plane's bounding sphere clips the frustum from the low gameplay camera,
+  // culling the whole ground (blank grey world) — every other world mesh opts out of culling too.
+  ground.frustumCulled = false;
   scene.add(ground);
 
   // --- player: a procedural human survivor (swappable avatar) ---

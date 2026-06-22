@@ -1,6 +1,28 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <script>
+  /* TEMP BUFDBG: capture oversized-UBO vertex shaders before three boots */
+  (function(){
+    var proto = WebGL2RenderingContext.prototype;
+    var origLog = proto.getProgramInfoLog;
+    window.__capt = {};
+    proto.getProgramInfoLog = function(program){
+      var log = origLog.call(this, program);
+      if (log && /GL_MAX_UNIFORM_BLOCK_SIZE|NodeBuffer/.test(log)){
+        try {
+          var shaders = this.getAttachedShaders(program) || [];
+          for (var i=0;i<shaders.length;i++){
+            var src = this.getShaderSource(shaders[i]) || '';
+            var m = src.match(/NodeBuffer_(\d+)/);
+            if (m && !window.__capt[m[0]]) window.__capt[m[0]] = src;
+          }
+        } catch(e){ window.__capt.err = ''+e; }
+      }
+      return log;
+    };
+  })();
+  </script>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>NEON SWARM</title>
