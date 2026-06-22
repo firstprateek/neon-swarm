@@ -214,7 +214,7 @@ async function start() {
       // warped zone radii — must mirror city.zoneAt (R0_BASE 200 ±34, R1_BASE 400 ±52)
       const warpLo = wLoA.x.mul(sin(th.add(wLoP.x))).add(wLoA.y.mul(sin(th.mul(2).add(wLoP.y)))).add(wLoA.z.mul(sin(th.mul(3).add(wLoP.z))));
       const warpHi = wHiA.x.mul(sin(th.add(wHiP.x))).add(wHiA.y.mul(sin(th.mul(2).add(wHiP.y)))).add(wHiA.z.mul(sin(th.mul(3).add(wHiP.z))));
-      const r0 = float(200).add(warpLo.mul(34)), r1 = float(400).add(warpHi.mul(52)), W = float(18);
+      const r0 = float(200).add(warpLo.mul(34)), r1 = float(400).add(warpHi.mul(52)), W = float(2); // tight band ≈ hard zoneAt() boundary (was 18 → 36u blend mismatched the gameplay zone)
       const sInner = smoothstep(r0.sub(W), r0.add(W), d), sOuter = smoothstep(r1.sub(W), r1.add(W), d);
       const fDown = oneMinus(sInner), fSub = sInner.sub(sOuter), fPark = sOuter;
       // shared mottle + crack network (mx_noise_float — identical on WebGPU + WebGL2, unlike worley)

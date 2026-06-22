@@ -605,8 +605,8 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
   const billboards: { x: number; z: number; ang: number; lit: boolean }[] = [];
   // a walkable deck spans each lake (PASS_UNDER → carved free over the SOLID water)
   for (const lk of lakes) {
-    const half = lk.r + 7, hw = 7;
-    push(lk.x - half, lk.z - hw, lk.x + half, lk.z + hw, ObsFlag.PASS_UNDER, 1.4, Kind.Bridge);
+    const half = lk.r + 7, hw = 7, m = 0.8; // carve +m (player radius) per side so the FULL visual deck is walkable
+    push(lk.x - half - m, lk.z - hw - m, lk.x + half + m, lk.z + hw + m, ObsFlag.PASS_UNDER, 1.4, Kind.Bridge);
     bridges.push({ x: lk.x, z: lk.z, len: half * 2, hw });
   }
   // ≤2 tunnels on the X-axis spoke (axis-aligned bore), out in the park
@@ -614,7 +614,7 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     const cx = sgn * 470, cz = 0;
     if (zone(cx, cz) !== Zone.Park) continue;
     push(cx - 26, cz - 26, cx + 26, cz + 26, ObsFlag.SOLID, 15, Kind.Tunnel);        // massif (the hill)
-    push(cx - 27, cz - 8, cx + 27, cz + 8, ObsFlag.PASS_UNDER, 9, Kind.Tunnel);      // bore → carved free
+    push(cx - 27, cz - 8 - 0.8, cx + 27, cz + 8 + 0.8, ObsFlag.PASS_UNDER, 9, Kind.Tunnel); // bore → carved free (+player radius so the full bore is walkable)
     tunnels.push({ minX: cx - 27, minZ: cz - 8, maxX: cx + 27, maxZ: cz + 8, cx, cz });
   }
   // a few plain billboards lining the radial spokes — 2 SOLID posts you walk between/under a raised sign
@@ -640,7 +640,7 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     const gx = Math.cos(g.ang) * g.r, gz = Math.sin(g.ang) * g.r;
     // sign faces the world centre (inward); posts + collision flank it along that yawed width axis
     const yaw = Math.atan2(-gx, -gz), cwx = Math.cos(yaw), swx = Math.sin(yaw);
-    for (const s of [-9, 9]) { const px = gx + s * cwx, pz = gz - s * swx; push(px - 0.8, pz - 0.8, px + 0.8, pz + 0.8, ObsFlag.SOLID, 16, Kind.Billboard); }
+    for (const s of [-9, 9]) { const px = gx + s * cwx, pz = gz - s * swx; push(px - 0.7, pz - 0.7, px + 0.7, pz + 0.7, ObsFlag.SOLID, 16, Kind.Billboard); } // 1.4-wide collision matches the 1.4 post mesh
     signGates.push({ x: gx, z: gz, y: 14, yaw, text: g.text, accent: g.accent, w: 18, h: 6 });
   }
   // the suburb shopping MALL — a big ENTERABLE landmark: hollow, door facing the parking lot,
@@ -1014,7 +1014,8 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
       if (rr) {
         let dmin = Infinity, dmax = 0;
         for (let i = 0; i < rr.n; i++) {
-          const inside = px >= rr.minX[i] && px <= rr.maxX[i] && pz >= rr.minZ[i] && pz <= rr.maxZ[i];
+          // fade only once you're PAST the wall ring (truly inside the room), not while still in the wall
+          const inside = px >= rr.minX[i] + WALL_T && px <= rr.maxX[i] - WALL_T && pz >= rr.minZ[i] + WALL_T && pz <= rr.maxZ[i] - WALL_T;
           const a = rr.alpha[i] + ((inside ? ROOF_IN : ROOF_OUT) - rr.alpha[i]) * k;
           if (Math.abs(a - rr.alpha[i]) > 0.0008) {
             rr.alpha[i] = a;

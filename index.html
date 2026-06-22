@@ -15,6 +15,10 @@
        Cyan ~80% (identity + primary actions); amber ~20% (hazard).
        ============================================================ */
     :root {
+      /* safe-area insets exposed as CSS vars so touch.ts safeInset() reads real values (was NaN→0,
+         letting the joystick overlap the notch / home-bar on phones) */
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --safe-right:  env(safe-area-inset-right, 0px);
       /* --- surfaces (SOLID; one alpha variant for HUD over live canvas) --- */
       --hz-bg-page:    #05060a;
       --hz-bg-panel:   #0a0e16;             /* solid default card/section */
