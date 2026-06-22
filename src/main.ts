@@ -391,9 +391,10 @@ async function start() {
     renderer.setSize(w, h);
     bloomEnabled = bloomAllowed && tq.bloom && !!post;
     // atmosphere tiers DOWN with the governor so the 120fps target always wins
-    gradeAmt.value = quality.tier <= 1 ? 1.0 : quality.tier === 2 ? 0.6 : 0.0;
+    // the split-tone/desaturation/vignette grade is part of the optional ATMOSPHERE (off by default → clean screen)
+    gradeAmt.value = settings.atmosphere ? (quality.tier <= 1 ? 1.0 : quality.tier === 2 ? 0.6 : 0.0) : 0.0;
     uDetail.value = quality.tier <= 1 ? 1.0 : quality.tier === 2 ? 0.5 : 0.0;
-    ambient.setBudget([260, 160, 90, 0][quality.tier] ?? 160); // ash count tiers down (0 on low)
+    ambient.setBudget(settings.atmosphere ? ([260, 160, 90, 0][quality.tier] ?? 160) : 0); // drifting ash/embers — only with ATMOSPHERE on
     city?.setVisualTier(quality.tier); // cosmetic city LOD only — collidable rects never change
     const gov = pinnedTier >= 0 ? 'fixed' : `${targetFps}fps target`;
     hud.setBackend(`${onWebGPU() ? 'WebGPU' : 'WebGL2'}${backendNote} · ${gov} · quality: ${tq.label}${bloomEnabled ? '' : ' (no bloom)'}`);
@@ -573,6 +574,7 @@ async function start() {
   const qSel = byId<HTMLSelectElement>('set-quality');
   const fpsSel = byId<HTMLSelectElement>('set-fps');
   const bloomChk = byId<HTMLInputElement>('set-bloom');
+  const atmosChk = byId<HTMLInputElement>('set-atmosphere');
   const soundChk = byId<HTMLInputElement>('set-sound');
   const volRange = byId<HTMLInputElement>('set-volume');
   const musicRange = byId<HTMLInputElement>('set-music');
@@ -642,6 +644,7 @@ async function start() {
     qSel.value = settings.quality;
     fpsSel.value = String(settings.fps);
     bloomChk.checked = settings.bloom;
+    atmosChk.checked = settings.atmosphere;
     zoomRange.value = String(Math.round(settings.zoom * 100));
     soundChk.checked = settings.sound;
     volRange.value = String(settings.volume);
@@ -692,6 +695,7 @@ async function start() {
   qSel.addEventListener('change', () => { settings.quality = qSel.value as QualityMode; applySettings(); });
   fpsSel.addEventListener('change', () => { settings.fps = Number(fpsSel.value); applySettings(); });
   bloomChk.addEventListener('change', () => { settings.bloom = bloomChk.checked; applySettings(); });
+  atmosChk.addEventListener('change', () => { settings.atmosphere = atmosChk.checked; applySettings(); });
   soundChk.addEventListener('change', () => { settings.sound = soundChk.checked; applySettings(); });
   volRange.addEventListener('input', () => { settings.volume = Number(volRange.value); applySettings(); });
   musicRange.addEventListener('input', () => { settings.music = Number(musicRange.value); applySettings(); });
@@ -1224,8 +1228,9 @@ async function start() {
     camera.position.x += (player.position.x - camera.position.x) * zlerp;
     camera.position.y += (26 * settings.zoom + gh - camera.position.y) * zlerp;
     camera.position.z += (player.position.z + 15 * settings.zoom - camera.position.z) * zlerp;
-    // fog only in the national park (Zone.Park === 2): cross-fade the density as you cross in/out
-    const inPark = city ? city.zoneAt(player.position.x, player.position.z) === 2 : false;
+    // fog: an optional ATMOSPHERE effect (off by default). When on, it lives only in the national park
+    // (Zone.Park === 2) and cross-fades as you enter/leave; when off it stays fully cleared.
+    const inPark = settings.atmosphere && city ? city.zoneAt(player.position.x, player.position.z) === 2 : false;
     const fog = scene.fog as THREE.FogExp2;
     fog.density += ((inPark ? PARK_FOG : 0) - fog.density) * Math.min(1, dt * 2.5);
     // transient, zero-mean screen-shake offset (re-centered by the lerp next frame)

@@ -12,6 +12,7 @@ export interface Settings {
   // video
   quality: QualityMode;
   bloom: boolean;
+  atmosphere: boolean; // fog + drifting ash/ember particles + the split-tone/vignette grade. Default OFF (clean screen).
   fps: number;    // one of FPS_CHOICES
   zoom: number;   // camera dolly multiplier: <1 = closer (zoom in), >1 = farther (zoom out)
   // audio
@@ -40,7 +41,7 @@ export const clampZoom = (z: number) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z)
 
 export function defaultSettings(): Settings {
   return {
-    quality: 'auto', bloom: true, fps: 120, zoom: ZOOM_DEFAULT,
+    quality: 'auto', bloom: true, atmosphere: false, fps: 120, zoom: ZOOM_DEFAULT,
     sound: true, volume: 45, music: 35,
     autoFire: true, gunLock: true, missileLock: true, // == EASY (today's behavior)
     avatar: 0, keybinds: defaultKeys(), dailyMode: 'easy',
@@ -59,6 +60,7 @@ export function mergeSettings(raw: unknown): Settings {
   return {
     quality: QUALITY_CHOICES.includes(r.quality as QualityMode) ? (r.quality as QualityMode) : d.quality,
     bloom: bool(r.bloom, d.bloom),
+    atmosphere: bool(r.atmosphere, d.atmosphere),
     fps: FPS_CHOICES.includes(r.fps as number) ? (r.fps as number) : d.fps,
     zoom: typeof r.zoom === 'number' && isFinite(r.zoom) ? clampZoom(r.zoom) : d.zoom,
     sound: bool(r.sound, d.sound),
