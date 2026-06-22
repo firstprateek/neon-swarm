@@ -234,8 +234,8 @@ export class Tesla {
 
 /** colour a primitive in place (position+color only) for merging into a drone body */
 function tintPart(g: THREE.BufferGeometry, r: number, gg: number, b: number): THREE.BufferGeometry {
-  const ng = g.toNonIndexed();
-  g.dispose();
+  const ng = g.index ? g.toNonIndexed() : g; // already-non-indexed → use as-is (no warn / no double-free)
+  if (ng !== g) g.dispose();
   ng.deleteAttribute('uv'); ng.deleteAttribute('normal');
   const n = ng.attributes.position.count;
   const c = new Float32Array(n * 3);

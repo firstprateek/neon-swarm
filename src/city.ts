@@ -628,9 +628,9 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     push(bx + px * 4 - pw / 2, bz + pz * 4 - pw / 2, bx + px * 4 + pw / 2, bz + pz * 4 + pw / 2, ObsFlag.SOLID, ph, Kind.Billboard);
     billboards.push({ x: bx, z: bz, ang: a, lit: true });
   }
-  // GATEWAY billboards — one big neon sign naming each zone. The follow-cam always looks in a
-  // FIXED world direction (−z), so the signs face +z (width along x) → always readable head-on.
-  const signGates: { x: number; z: number; y: number; text: string; accent: string; w: number; h: number }[] = [];
+  // GATEWAY billboards — one big neon sign naming each zone. Each sign YAWS to face the world centre
+  // (inward), so it reads head-on as you approach the gate from downtown; the posts follow that yaw.
+  const signGates: { x: number; z: number; y: number; yaw: number; text: string; accent: string; w: number; h: number }[] = [];
   const GATES = [
     { r: 135, ang: Math.PI / 2, text: 'NEON DOWNTOWN', accent: '#5ef2ff' },
     { r: 300, ang: Math.PI * 7 / 6, text: 'NEON SUBURB', accent: '#ffd24a' },
@@ -638,8 +638,10 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
   ];
   for (const g of GATES) {
     const gx = Math.cos(g.ang) * g.r, gz = Math.sin(g.ang) * g.r;
-    for (const s of [-9, 9]) push(gx + s - 0.8, gz - 0.8, gx + s + 0.8, gz + 0.8, ObsFlag.SOLID, 11, Kind.Billboard); // posts flank along x
-    signGates.push({ x: gx, z: gz, y: 8.4, text: g.text, accent: g.accent, w: 18, h: 6 });
+    // sign faces the world centre (inward); posts + collision flank it along that yawed width axis
+    const yaw = Math.atan2(-gx, -gz), cwx = Math.cos(yaw), swx = Math.sin(yaw);
+    for (const s of [-9, 9]) { const px = gx + s * cwx, pz = gz - s * swx; push(px - 0.8, pz - 0.8, px + 0.8, pz + 0.8, ObsFlag.SOLID, 16, Kind.Billboard); }
+    signGates.push({ x: gx, z: gz, y: 14, yaw, text: g.text, accent: g.accent, w: 18, h: 6 });
   }
   // the suburb shopping MALL — a big ENTERABLE landmark: hollow, door facing the parking lot,
   // with a handful of supply caches inside (you walk in from the lot and loot it)
@@ -930,12 +932,16 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     const postParts: THREE.BufferGeometry[] = [];
     const bbt = KIND_TINT[Kind.Billboard];
     for (const sg of signGates) {
-      for (const s of [-9, 9]) postParts.push(paint(new THREE.BoxGeometry(1.4, 11, 1.4).translate(sg.x + s, 5.5, sg.z), bbt[0], bbt[1], bbt[2]));
+      const cwx = Math.cos(sg.yaw), swx = Math.sin(sg.yaw);
+      // posts flank the sign along its (yawed) width axis, 16 tall so the sign mounts near their top
+      for (const s of [-9, 9]) postParts.push(paint(new THREE.BoxGeometry(1.4, 16, 1.4).translate(sg.x + s * cwx, 8, sg.z - s * swx), bbt[0], bbt[1], bbt[2]));
       const mat = new THREE.MeshBasicMaterial({ map: makeSignTexture(sg.text, sg.accent), toneMapped: false, side: THREE.DoubleSide });
       const sign = new THREE.Mesh(new THREE.PlaneGeometry(sg.w, sg.h), mat);
       sign.position.set(sg.x, sg.y, sg.z);
-      // FIXED orientation (never tracks the player): tilt so the face is head-on to the camera's
-      // constant 60°-down view direction → readable when ahead, like a real billboard.
+      // FIXED orientation (never tracks the player): yaw to face the world centre, then tilt back for
+      // the constant 60°-down camera → each gate's sign reads head-on as you approach from downtown.
+      sign.rotation.order = 'YXZ';
+      sign.rotation.y = sg.yaw;
       sign.rotation.x = -1.05;
       sign.frustumCulled = false;
       meshes.push(sign);

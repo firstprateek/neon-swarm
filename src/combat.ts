@@ -585,8 +585,8 @@ export const enum DropType { Health = 0, Missiles = 1, Nuke = 2 }
 // InstancedMesh per drop type carries a clear multi-colour silhouette. Unlit + bright
 // (MeshBasicMaterial, toneMapped off) so the caches read & glow in a dark interior.
 function paintGeo(g: THREE.BufferGeometry, c: [number, number, number]): THREE.BufferGeometry {
-  const ng = g.toNonIndexed();
-  g.dispose();
+  const ng = g.index ? g.toNonIndexed() : g; // already-non-indexed → use as-is (no warn / no double-free)
+  if (ng !== g) g.dispose();
   ng.deleteAttribute('uv'); ng.deleteAttribute('normal'); // keep attribute sets identical for the merge (basic mat needs neither)
   const n = ng.attributes.position.count;
   const col = new Float32Array(n * 3);
