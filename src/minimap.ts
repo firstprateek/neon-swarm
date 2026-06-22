@@ -89,7 +89,9 @@ export class Minimap {
     const R = S * 0.1, rc = this.revealCtx;
     const g = rc.createRadialGradient(ux, uy, 0, ux, uy, R);
     g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.7, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    rc.globalCompositeOperation = 'lighten'; // overlapping reveals take MAX alpha → explored area fully opacifies (source-over asymptotes <255)
     rc.fillStyle = g; rc.beginPath(); rc.arc(ux, uy, R, 0, 7); rc.fill();
+    rc.globalCompositeOperation = 'source-over';
     // (2) draw the static map, then keep ONLY the explored part (fog = the dark panel showing through)
     c.clearRect(0, 0, S, S);
     c.globalCompositeOperation = 'source-over'; c.drawImage(this.bg, 0, 0);

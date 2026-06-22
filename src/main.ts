@@ -831,7 +831,7 @@ async function start() {
   let fireHeld = false; // desktop FIRE key/mouse held (manual auto-fire-off mode)
   const setFireHeld = (v: boolean): void => { fireHeld = v; };
   let engaged = false;  // suppress auto-fire until the player first moves/aims (no stray spawn bullet)
-  let facing = 0;
+  let facing = Math.PI; // face "forward" (−z, the camera's view dir) so a dash before the first update goes forward, not backward
   let muzzle = 0; // muzzle-flash glow pulse, decays each frame
   const baseGlow = glow.intensity;
 
@@ -893,7 +893,7 @@ async function start() {
     blast.detonate(px, pz);
     particles.burst(px, 1.4, pz, new THREE.Color(0xffffff), 140, 30); // white-hot core
     particles.burst(px, 0.9, pz, new THREE.Color(0x9ff0ff), 110, 46); // fast energy ring
-    particles.burst(px, 0.6, pz, new THREE.Color(0xffae3a), 130, 16); // fire / falling embers
+    particles.burst(px, 0.6, pz, new THREE.Color(0xffb83a), 130, 16); // fire / falling embers (nudged above the 0.75 bloom-luma threshold so they glow)
     hud.flash('#e6fcff', 1);
     addShake(2.6); // clamps to the shake cap, but spends it all
     hitStop = 0.22; // a heavier freeze for weight
@@ -1082,7 +1082,7 @@ async function start() {
         if (started && !over && !leveling && !paused) { tickRealtime(dt); update(dt); }
         else if (over) particles.update(dt);
         blast.update(dt);
-        ambient.update(dt, camera.position.x, camera.position.z, i / 60);
+        ambient.update(dt, camera.position.x, camera.position.z, performance.now() / 1000); // wall-clock flicker, consistent with the live loop
         city?.updateTunnels(player.position.x, player.position.z, dt); // mirror the rAF loop (tunnel + roof fades)
         hud.tick(dt);
         if (touch) { if (canAct()) touch.show(); else touch.hide(); }
