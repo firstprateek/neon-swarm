@@ -27,7 +27,7 @@ import { TELEMETRY_ENDPOINT } from './config';
 import { track, initTelemetry, wireTelemetryLifecycle } from './telemetry';
 import { submitScore, flushScores, beaconFlushScores, fetchBoard } from './leaderboard';
 import { normNote, dprBucket, screenTier, refAllow, hostOnly, rotShareToken } from './telemetry-helpers';
-import { dailySeed, dailyNumber, getDailyBest, recordDailyScore } from './daily';
+import { dailySeed, dailyNumber, getDailyBest, recordDailyScore, recordDailyPlayed, getStreak } from './daily';
 import * as sfx from './sfx';
 import * as hud from './hud';
 
@@ -448,6 +448,7 @@ async function start() {
     saveSettings(settings);
     setAvatar(idx);
     started = true;
+    if (isDaily) recordDailyPlayed(Date.now()); // advance the local daily streak the moment a daily run starts
     iframes = SPAWN_GRACE; // brief invulnerability so the first-frame spawn swarm can't instantly CONSUME you
     buildWorld(); // generate the collidable city from the now-final seed
     touch?.setFireVisible(!settings.autoFire); // mobile FIRE button only when auto-fire is off
@@ -1016,7 +1017,7 @@ async function start() {
       seed,
       // UTM is appended ONLY when the backend is on, so shared links are unchanged while off
       shareUrl: `${location.origin}${location.pathname}?seed=${seed}${isDaily ? `&mode=${dailyMode}` : ''}${TELEMETRY_ENDPOINT ? `&utm_source=${isDaily ? 'challenge' : 'share'}` : ''}`,
-      daily: isDaily ? { num: dailyNum, mode: dailyMode, best: getDailyBest(dailyNum, dailyMode), isBest: newDailyBest } : null,
+      daily: isDaily ? { num: dailyNum, mode: dailyMode, best: getDailyBest(dailyNum, dailyMode), isBest: newDailyBest, streak: getStreak(Date.now()) } : null,
       onFeedback: (input) => submitFeedback(input, fbCtx),
       onShare: (method) => track('share_click', { is_daily: isDaily, method, score: state.score }),
       onBoard: isDaily ? () => fetchBoard(dailyNum, dailyMode) : undefined,

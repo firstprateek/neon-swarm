@@ -67,3 +67,31 @@ export function recordDailyScore(num: number, mode: Difficulty, score: number): 
   }
   return false;
 }
+
+// --- daily STREAK: consecutive UTC days the player took the daily (the #1 habit hook) ---
+const STREAK_KEY = 'ns-daily-streak';
+function readStreak(): { last: number; count: number } {
+  try {
+    const r = JSON.parse(localStorage.getItem(STREAK_KEY) || 'null');
+    if (r && typeof r.last === 'number' && typeof r.count === 'number') return r;
+  } catch { /* storage unavailable / corrupt */ }
+  return { last: 0, count: 0 };
+}
+
+/** mark today's daily as played and advance the streak; call once when a daily run starts. Returns the new streak. */
+export function recordDailyPlayed(now: number): number {
+  const today = dailyNumber(now);
+  const s = readStreak();
+  if (s.last === today) return s.count;                  // already counted today
+  s.count = s.last === today - 1 ? s.count + 1 : 1;      // played yesterday → extend, else (re)start at 1
+  s.last = today;
+  try { localStorage.setItem(STREAK_KEY, JSON.stringify(s)); } catch { /* ignore */ }
+  return s.count;
+}
+
+/** current streak length — still alive if the last play was today or yesterday, else 0 (broken). Pure read. */
+export function getStreak(now: number): number {
+  const today = dailyNumber(now);
+  const s = readStreak();
+  return s.last === today || s.last === today - 1 ? s.count : 0;
+}

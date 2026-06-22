@@ -17,7 +17,7 @@ import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize } from './director';
 import { setSeed, srand, getSeed, clearSeed, streamFrom, CITY_SALT } from './rng';
 import { generateCity, resolveMove, cellBlocked, _reachable, WORLD, DIM, ObsFlag, type BlockGrid } from './city';
-import { dailySeed, dailyNumber, dailyKey, secondsToNextDaily, getDailyBest, recordDailyScore } from './daily';
+import { dailySeed, dailyNumber, dailyKey, secondsToNextDaily, getDailyBest, recordDailyScore, recordDailyPlayed, getStreak } from './daily';
 import { createQuality, governQuality, MAX_TIER } from './perf';
 import * as sfx from './sfx';
 import { defaultSettings, mergeSettings, qualityTier, applyPreset } from './settings';
@@ -704,6 +704,17 @@ function run(): void {
     recordDailyScore(k, 'hard', 1200);
     check('daily: modes are independent leaderboards', getDailyBest(k, 'easy') === 900 && getDailyBest(k, 'hard') === 1200 && getDailyBest(k, 'medium') === 0);
     for (const m of ['easy', 'medium', 'hard'] as const) localStorage.removeItem(`ns-daily-best-${k}-${m}`);
+
+    // daily STREAK: consecutive plays extend, a gap resets, and it expires after a missed day
+    localStorage.removeItem('ns-daily-streak');
+    const DAY = 86400000, E = Date.UTC(2026, 5, 1); // E = daily #1 epoch
+    check('streak: first play starts at 1', recordDailyPlayed(E) === 1);
+    check('streak: replay same day stays 1', recordDailyPlayed(E) === 1);
+    check('streak: consecutive day extends to 2', recordDailyPlayed(E + DAY) === 2);
+    check('streak: a gap day resets to 1', recordDailyPlayed(E + 3 * DAY) === 1);
+    check('streak: alive when last play was yesterday', getStreak(E + 4 * DAY) === 1);
+    check('streak: broken after a fully missed day', getStreak(E + 6 * DAY) === 0);
+    localStorage.removeItem('ns-daily-streak');
   }
 
   // ---------- Director / difficulty ----------

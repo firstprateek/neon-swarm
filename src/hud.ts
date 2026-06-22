@@ -452,7 +452,7 @@ export interface RunInfo {
   seed: number;
   shareUrl: string;
   /** present when the run was today's Daily Challenge */
-  daily?: { num: number; mode: Difficulty; best: number; isBest: boolean } | null;
+  daily?: { num: number; mode: Difficulty; best: number; isBest: boolean; streak?: number } | null;
   /** receives a feedback submission from the game-over panel */
   onFeedback?: (input: FeedbackInput) => void;
   /** fired when the player shares (for telemetry) — no-op when the backend is off */
@@ -476,7 +476,8 @@ export function showGameOver(state: GameState, info: RunInfo): void {
   if (daily) {
     dailyEl.classList.remove('hidden');
     dailyEl.classList.toggle('newbest', daily.isBest);
-    dailyEl.textContent = daily.isBest ? '★ NEW DAILY BEST!' : `DAILY BEST ${daily.best.toLocaleString()}`;
+    dailyEl.textContent = (daily.isBest ? '★ NEW DAILY BEST!' : `DAILY BEST ${daily.best.toLocaleString()}`)
+      + (daily.streak && daily.streak > 1 ? `   🔥 ${daily.streak}-DAY STREAK` : ''); // local streak (works with the backend off)
   } else {
     dailyEl.classList.add('hidden');
   }
@@ -489,9 +490,12 @@ export function showGameOver(state: GameState, info: RunInfo): void {
     `<div>PEAK COMBO <b>${state.comboPeak}</b></div>`;
   el('brag-seed').textContent = `SEED #${info.seed}`;
 
+  // Wordle-style emoji micro-summary (survival / peak combo / kills) — spreads better than plain text
+  const summary = `🧟 ${time}  ⚔ ×${peakMult}  💀 ${state.kills.toLocaleString()}`;
+  const streakBit = daily && daily.streak && daily.streak > 1 ? ` · 🔥${daily.streak}` : '';
   const shareText = daily
-    ? `I scored ${state.score.toLocaleString()} on NEON SWARM ☀ Daily #${daily.num} 🧟 — same run for everyone today, can you beat me? ${info.shareUrl}`
-    : `I scored ${state.score.toLocaleString()} in NEON SWARM 🧟 — same seed, can you beat my run? ${info.shareUrl}`;
+    ? `NEON SWARM ☀ Daily #${daily.num}${streakBit} — ${state.score.toLocaleString()} pts\n${summary}\nSame run for everyone today — can you beat me? ${info.shareUrl}`
+    : `NEON SWARM 🧟 — ${state.score.toLocaleString()} pts\n${summary}\nSame seed — can you beat my run? ${info.shareUrl}`;
   const shareBtn = el<HTMLButtonElement>('share-btn');
   shareBtn.textContent = '⚔ CHALLENGE A FRIEND';
   shareBtn.onclick = async () => {
