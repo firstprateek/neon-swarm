@@ -195,8 +195,8 @@ function run(): void {
     const hc = generateCity(424242, false, true);
     const ob = hc.obstacles;
     let hollowN = 0, eligible = 0;
-    // hollow-eligible kinds: House/Hospital/Cinema/Ruin/Mall (everything but Tower + Rubble + Boundary)
-    const hollowKind = (k: number) => k === 0 || k === 1 || k === 2 || k === 3 || k === 7;
+    // hollow-eligible kinds: House/Hospital/Cinema/Ruin/Tower/Mall (towers at a lower rate; not Rubble/Boundary)
+    const hollowKind = (k: number) => k === 0 || k === 1 || k === 2 || k === 3 || k === 6 || k === 7;
     for (let i = 0; i < ob.count; i++) {
       const fw = ob.maxX[i] - ob.minX[i], fd = ob.maxZ[i] - ob.minZ[i];
       if (hollowKind(ob.kind[i]) && fw >= 16 && fd >= 16) eligible++;

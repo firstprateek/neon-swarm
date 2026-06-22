@@ -543,8 +543,10 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
       else height = 1.5 + rng() * 2.5;                            // rubble pile
       // ~half the standing buildings are HOLLOW (enterable, with a supply cache inside) — every
       // kind EXCEPT the tower skyline and the tiny rubble piles; ~60% of those big enough.
-      const hollowOk = kind === Kind.House || kind === Kind.Hospital || kind === Kind.Cinema || kind === Kind.Mall || kind === Kind.Ruin;
-      const hollow = (hollowOk && fw >= HOLLOW_MIN && fd >= HOLLOW_MIN && rng() < 0.6) ? 1 : 0;
+      const hollowOk = kind === Kind.House || kind === Kind.Hospital || kind === Kind.Cinema || kind === Kind.Mall || kind === Kind.Ruin || kind === Kind.Tower;
+      // towers are enterable too, but at a lower rate so most skyscrapers stay tall + solid (skyline survives)
+      const hollowRate = kind === Kind.Tower ? 0.35 : 0.6;
+      const hollow = (hollowOk && fw >= HOLLOW_MIN && fd >= HOLLOW_MIN && rng() < hollowRate) ? 1 : 0;
       let doorSide = 0;
       if (hollow) {
         doorSide = (rng() * 4) | 0;
