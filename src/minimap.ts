@@ -1,7 +1,8 @@
-import type { City } from './city';
+import { WORLD, type City } from './city';
 import type { Swarm } from './swarm';
 
-const WORLD = 1200, HALF = 600, BOUND = 560;
+// single source of truth — these mirror city.ts's WORLD so the map can't silently drift from the sim
+const SIZE = WORLD.SIZE, HALF = WORLD.HALF, BOUND = WORLD.BOUND;
 
 /**
  * Top-right minimap: a zoomed-out map of the finite world. The STATIC layer
@@ -38,8 +39,8 @@ export class Minimap {
   /** uncover the entire map (the 'padirules' cheat) */
   revealAll(): void { this.revealCtx.fillStyle = '#fff'; this.revealCtx.fillRect(0, 0, this.size, this.size); }
 
-  private px(x: number): number { return (x + HALF) / WORLD * this.size; }
-  private py(z: number): number { return (z + HALF) / WORLD * this.size; }
+  private px(x: number): number { return (x + HALF) / SIZE * this.size; }
+  private py(z: number): number { return (z + HALF) / SIZE * this.size; }
   private tri(c: CanvasRenderingContext2D, x: number, y: number, s: number): void {
     c.beginPath(); c.moveTo(x, y - s); c.lineTo(x + s, y + s); c.lineTo(x - s, y + s); c.closePath(); c.fill();
   }
@@ -54,7 +55,7 @@ export class Minimap {
     const zoneCol = ['#46536e', '#7c6336', '#356e2c']; // downtown blue-grey / suburb tan / park green (brightened to read on a small panel)
     for (let gy = 0; gy < N; gy++) {
       for (let gx = 0; gx < N; gx++) {
-        const wx = (gx + 0.5) / N * WORLD - HALF, wz = (gy + 0.5) / N * WORLD - HALF;
+        const wx = (gx + 0.5) / N * SIZE - HALF, wz = (gy + 0.5) / N * SIZE - HALF;
         c.fillStyle = zoneCol[city.zoneAt(wx, wz)] ?? zoneCol[0];
         c.fillRect(gx * cs, gy * cs, cs + 1, cs + 1);
       }

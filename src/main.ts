@@ -5,7 +5,7 @@ import { pass, uniform, mix, vec3, screenUV, luminance, clamp, oneMinus,
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { createState, grantXp, rollUpgrades, registerKill, tickCombo, UPGRADES, ammoDropFor,
   MISSILE_BASE, MISSILE_MAX, NUKE_MAX, MISSILE_REFILL, MISSILE_DMG, MISSILE_AOE, NUKE_DMG } from './state';
-import { getMove, getAim, isAimActive, setTouchMove, clearTouchMove, setMouseAim, setKeyMap, heldKeys } from './input';
+import { getMove, getAim, isAimActive, setTouchMove, clearTouchMove, setMouseAim, clearMouseAim, tickMouseAim, setKeyMap, heldKeys } from './input';
 import { resolveAction, isDown, defaultKeys, isBindable, keyLabel, KEY_ACTIONS, ACTION_LABELS, type KeyAction } from './keybind';
 import { type Difficulty, DIFFICULTIES, flagsToPreset, coerceDifficulty } from './modes';
 import { createTouch } from './touch';
@@ -512,10 +512,10 @@ async function start() {
   // --- cheat codes: type the sequence anytime ---
   const cheats: { code: string; effect: () => string }[] = [
     { code: 'god', effect: () => { godMode = !godMode; return godMode ? 'GOD MODE ON' : 'GOD MODE OFF'; } },
-    { code: 'guns', effect: () => { state.dmg = 80; state.fireRate = 14; state.projectiles = 8; state.pierce = 6; state.bulletSpeed = 48; state.orbitalLevel = 5; state.teslaLevel = 5; state.droneLevel = 6; return 'MAX WEAPONS'; } },
+    { code: 'guns', effect: () => { state.dmg = 80; state.fireRate = 14; state.projectiles = 8; state.pierce = 6; state.bulletSpeed = 48; state.orbitalLevel = 5; state.teslaLevel = 5; state.droneLevel = 6; UPGRADES[8].count = 5; UPGRADES[9].count = 5; UPGRADES[10].count = 6; return 'MAX WEAPONS'; } }, // mark secondaries maxed so they're not re-offered past cap
     { code: 'tank', effect: () => { state.maxHp += 200; state.hp = state.maxHp; return '+200 MAX HP'; } },
     { code: 'boss', effect: () => { spawnBoss(); return 'BOSS SUMMONED'; } },
-    { code: 'horde', effect: () => { for (let i = 0; i < 400; i++) { const a = Math.random() * Math.PI * 2, r = 18 + Math.random() * 40; swarm.spawn((Math.random() * BOSS_TYPE) | 0, player.position.x + Math.cos(a) * r, player.position.z + Math.sin(a) * r); } return 'HORDE SUMMONED'; } },
+    { code: 'horde', effect: () => { for (let i = 0; i < 400; i++) { const a = srand() * Math.PI * 2, r = 18 + srand() * 40; swarm.spawn((srand() * BOSS_TYPE) | 0, player.position.x + Math.cos(a) * r, player.position.z + Math.sin(a) * r); } return 'HORDE SUMMONED'; } }, // seeded RNG (not Math.random) so it stays deterministic
     { code: 'rich', effect: () => { state.score += 10000; return '+10000 SCORE'; } },
     { code: 'levelup', effect: () => { state.pendingLevels++; return 'LEVEL UP'; } },
     // the everything cheat: god mode, max level + every attribute maxed, whole map revealed,
@@ -526,6 +526,7 @@ async function start() {
       state.moveSpeed = 22; state.magnet = 40; state.regen = 15;
       state.maxHp = 100000; state.hp = state.maxHp;
       state.orbitalLevel = 5; state.teslaLevel = 5; state.droneLevel = 6;
+      UPGRADES[8].count = 5; UPGRADES[9].count = 5; UPGRADES[10].count = 6; // secondaries maxed → not re-offered past cap
       state.level = 99; state.xp = 0; state.xpNeed = Number.MAX_SAFE_INTEGER; state.pendingLevels = 0; // max level, no more level-ups
       state.missiles = MISSILE_MAX; state.nukes = NUKE_MAX;
       minimap.revealAll();
@@ -726,6 +727,9 @@ async function start() {
   let activeBosses = 0;
 
   function spawnBoss(): void {
+    // bosses are sequential (one at a time) and never spawn into a full pool — guard BOTH the timer
+    // path and the 'boss' cheat so counters/warning/sfx don't fire on a spawn that silently no-ops.
+    if (activeBosses > 0 || swarm.count >= MAX_ENEMIES) return;
     bossesSpawned++;
     const a = srand() * Math.PI * 2;
     const rad = 50;
@@ -942,6 +946,7 @@ async function start() {
       _ndc.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
       _ray.setFromCamera(_ndc, camera);
       if (_ray.ray.intersectPlane(_ground, _hit)) setMouseAim(_hit.x - player.position.x, _hit.z - player.position.z);
+      else clearMouseAim(); // cursor above the horizon / off-plane → drop the aim instead of firing a stale dir
     });
     const canvas = renderer.domElement;
     canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -1107,6 +1112,7 @@ async function start() {
     // i-frames decay with the (possibly hit-stop-scaled) sim — fine, they're
     // part of the dash action; the wall-clock cooldown/refill are in tickRealtime
     if (iframes > 0) iframes -= dt;
+    tickMouseAim(dt); // release a stale mouse aim after the cursor has been idle past the timeout
 
     const mv = getMove();
     // engage on first move/aim, OR automatically once the spawn grace passes so an IDLE player still
@@ -1220,10 +1226,10 @@ async function start() {
       // ammo DROPS from the tough enemies: brute +1 missile, heavy +2, boss +10 + a nuke
       const drop = ammoDropFor(type);
       if (drop.missiles || drop.nukes) {
-        state.missiles = Math.min(MISSILE_MAX, state.missiles + drop.missiles);
-        state.nukes = Math.min(NUKE_MAX, state.nukes + drop.nukes);
+        const gm = Math.min(MISSILE_MAX - state.missiles, drop.missiles); state.missiles += gm;
+        const gn = Math.min(NUKE_MAX - state.nukes, drop.nukes); state.nukes += gn;
         const sp = projectToScreen(x, t.radius + 1.5, z);
-        if (sp) hud.floatText(sp.sx, sp.sy, drop.nukes ? `+${drop.missiles} 🚀  +${drop.nukes} ☢` : `+${drop.missiles} 🚀`, '#7af3ff');
+        if (sp && (gm || gn)) hud.floatText(sp.sx, sp.sy, gn ? `+${gm} 🚀  +${gn} ☢` : `+${gm} 🚀`, '#7af3ff');
       }
       if (type === BOSS_TYPE) {
         activeBosses--;
@@ -1248,9 +1254,9 @@ async function start() {
     // supply caches inside hollow buildings: walk over one to collect it
     drops.update(state.time, player.position.x, player.position.z, type => {
       let label: string;
-      if (type === 0) { state.hp = Math.min(state.maxHp, state.hp + 100); label = '+100 ❤'; }
-      else if (type === 1) { state.missiles = Math.min(MISSILE_MAX, state.missiles + 10); label = '+10 🚀'; }
-      else { state.nukes = Math.min(NUKE_MAX, state.nukes + 1); label = '+1 ☢'; }
+      if (type === 0) { const g = Math.min(state.maxHp - state.hp, 100); state.hp += g; label = `+${Math.round(g)} ❤`; }
+      else if (type === 1) { const g = Math.min(MISSILE_MAX - state.missiles, 10); state.missiles += g; label = `+${g} 🚀`; }
+      else { const g = Math.min(NUKE_MAX - state.nukes, 1); state.nukes += g; label = `+${g} ☢`; }
       const sp = projectToScreen(player.position.x, 1.4, player.position.z);
       if (sp) hud.floatText(sp.sx, sp.sy, label, '#9bff52');
       sfx.sfxPickup();

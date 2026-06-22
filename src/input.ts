@@ -32,7 +32,8 @@ export function isTouchMoveActive(): boolean { return touchActive; }
 
 // --- aim override: decoupled from movement (twin-stick). mobile aim-stick > mouse. ---
 let touchAimActive = false, touchAimX = 0, touchAimZ = 0;
-let mouseAimActive = false, mouseAimX = 0, mouseAimZ = 0;
+let mouseAimActive = false, mouseAimX = 0, mouseAimZ = 0, mouseAimTimer = 0;
+const MOUSE_AIM_TIMEOUT = 1.5; // sec of cursor stillness after which the aim releases (was: never cleared → stale dir)
 
 /** mobile right-stick aim (world axes; magnitude ignored — direction only) */
 export function setTouchAim(x: number, z: number): void {
@@ -46,9 +47,13 @@ export function clearTouchAim(): void { touchAimActive = false; }
 export function setMouseAim(x: number, z: number): void {
   const len = Math.hypot(x, z);
   if (len < 1e-4) return;
-  mouseAimX = x / len; mouseAimZ = z / len; mouseAimActive = true;
+  mouseAimX = x / len; mouseAimZ = z / len; mouseAimActive = true; mouseAimTimer = MOUSE_AIM_TIMEOUT;
 }
 export function clearMouseAim(): void { mouseAimActive = false; }
+/** call each frame: releases a stale mouse aim once the cursor has been idle past the timeout */
+export function tickMouseAim(dt: number): void {
+  if (mouseAimActive && (mouseAimTimer -= dt) <= 0) mouseAimActive = false;
+}
 
 const aim = { x: 0, z: 0 };
 /** unit aim direction, or null when no manual aim is active (caller then holds last facing) */
