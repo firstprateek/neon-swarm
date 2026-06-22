@@ -453,6 +453,7 @@ export interface RunInfo {
   shareUrl: string;
   /** present when the run was today's Daily Challenge */
   daily?: { num: number; mode: Difficulty; best: number; isBest: boolean; streak?: number } | null;
+  newUnlock?: string | null; // a capability milestone crossed this run (freeplay)
   /** receives a feedback submission from the game-over panel */
   onFeedback?: (input: FeedbackInput) => void;
   /** fired when the player shares (for telemetry) — no-op when the backend is off */
@@ -478,6 +479,10 @@ export function showGameOver(state: GameState, info: RunInfo): void {
     dailyEl.classList.toggle('newbest', daily.isBest);
     dailyEl.textContent = (daily.isBest ? '★ NEW DAILY BEST!' : `DAILY BEST ${daily.best.toLocaleString()}`)
       + (daily.streak && daily.streak > 1 ? `   🔥 ${daily.streak}-DAY STREAK` : ''); // local streak (works with the backend off)
+  } else if (info.newUnlock) {
+    dailyEl.classList.remove('hidden');
+    dailyEl.classList.add('newbest'); // reuse the highlight style
+    dailyEl.textContent = `🔓 UNLOCKED: ${info.newUnlock}`; // capability milestone crossed — applies next freeplay run
   } else {
     dailyEl.classList.add('hidden');
   }

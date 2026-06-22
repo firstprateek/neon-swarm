@@ -18,6 +18,7 @@ import { spawnRate, rollEnemyType, bossHp, hordeSize } from './director';
 import { setSeed, srand, getSeed, clearSeed, streamFrom, CITY_SALT } from './rng';
 import { generateCity, resolveMove, cellBlocked, _reachable, WORLD, DIM, ObsFlag, type BlockGrid } from './city';
 import { dailySeed, dailyNumber, dailyKey, secondsToNextDaily, getDailyBest, recordDailyScore, recordDailyPlayed, getStreak } from './daily';
+import { getMeta, recordRun, unlockedIds } from './meta';
 import { createQuality, governQuality, MAX_TIER } from './perf';
 import * as sfx from './sfx';
 import { defaultSettings, mergeSettings, qualityTier, applyPreset } from './settings';
@@ -715,6 +716,19 @@ function run(): void {
     check('streak: alive when last play was yesterday', getStreak(E + 4 * DAY) === 1);
     check('streak: broken after a fully missed day', getStreak(E + 6 * DAY) === 0);
     localStorage.removeItem('ns-daily-streak');
+
+    // META-PROGRESSION: lifetime totals accumulate across runs; milestones unlock capabilities
+    localStorage.removeItem('ns-meta');
+    check('meta: starts empty with no unlocks', getMeta().runs === 0 && unlockedIds().length === 0);
+    recordRun(60, 1); // reach the suburb (zone 1)
+    check('meta: reaching the suburb unlocks orbital', unlockedIds(getMeta()).includes('orbital'));
+    recordRun(100, 2); // +100 kills (160 total ≥150) and reach the park (zone 2)
+    const mu = unlockedIds(getMeta());
+    check('meta: kills accumulate across runs (drone @150)', mu.includes('drone'));
+    check('meta: reaching the park unlocks tesla', mu.includes('tesla'));
+    check('meta: runs counted', getMeta().runs === 2);
+    check('meta: hardest unlock still locked (needs 1500 kills)', !mu.includes('drone2'));
+    localStorage.removeItem('ns-meta');
   }
 
   // ---------- Director / difficulty ----------

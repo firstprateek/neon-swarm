@@ -28,6 +28,7 @@ import { track, initTelemetry, wireTelemetryLifecycle } from './telemetry';
 import { submitScore, flushScores, beaconFlushScores, fetchBoard } from './leaderboard';
 import { normNote, dprBucket, screenTier, refAllow, hostOnly, rotShareToken } from './telemetry-helpers';
 import { dailySeed, dailyNumber, getDailyBest, recordDailyScore, recordDailyPlayed, getStreak } from './daily';
+import { recordRun, unlockedIds, UNLOCKS } from './meta';
 import * as sfx from './sfx';
 import * as hud from './hud';
 
@@ -432,6 +433,7 @@ async function start() {
   let missileRefillTimer = MISSILE_REFILL;
   let dashCd = 0;     // dash cooldown remaining
   let musicTimer = 0; // throttles music-intensity updates
+  let runMaxZone = 0; // furthest zone reached this run (for meta-progression milestones)
   let dashTime = 0;   // dash burst remaining
   let infinite = false; // 'padirules' cheat: infinite dash + missiles + nukes (topped up each tick)
   let dashDirX = 0, dashDirZ = 1;
@@ -450,7 +452,18 @@ async function start() {
     saveSettings(settings);
     setAvatar(idx);
     started = true;
-    if (isDaily) recordDailyPlayed(Date.now()); // advance the local daily streak the moment a daily run starts
+    runMaxZone = 0;
+    if (isDaily) {
+      recordDailyPlayed(Date.now()); // advance the local daily streak the moment a daily run starts
+    } else {
+      // FREEPLAY only: apply earned capability unlocks (start with the secondaries you've unlocked).
+      // The daily never applies these — it stays an equal-footing competition.
+      const u = unlockedIds();
+      if (u.includes('orbital')) state.orbitalLevel = Math.max(state.orbitalLevel, 1);
+      if (u.includes('drone')) state.droneLevel = Math.max(state.droneLevel, 1);
+      if (u.includes('drone2')) state.droneLevel = Math.max(state.droneLevel, 2);
+      if (u.includes('tesla')) state.teslaLevel = Math.max(state.teslaLevel, 1);
+    }
     iframes = SPAWN_GRACE; // brief invulnerability so the first-frame spawn swarm can't instantly CONSUME you
     buildWorld(); // generate the collidable city from the now-final seed
     touch?.setFireVisible(!settings.autoFire); // mobile FIRE button only when auto-fire is off
@@ -1018,6 +1031,10 @@ async function start() {
     sfx.stopMusic(); // silence the drone on death (the next deploy restarts it)
     hud.hideBoss();
     const newDailyBest = isDaily ? recordDailyScore(dailyNum, dailyMode, state.score) : false;
+    // META: fold this run into lifetime totals + surface any newly-crossed capability milestone
+    const beforeUnlocks = unlockedIds();
+    const meta = recordRun(state.kills, runMaxZone);
+    const newUnlock = UNLOCKS.find(u => u.has(meta) && !beforeUnlocks.includes(u.id)) ?? null;
     const seed = getSeed();
     // telemetry + global-leaderboard submit (both no-op when the backend flag is off)
     track('run_end', {
@@ -1054,6 +1071,7 @@ async function start() {
       // UTM is appended ONLY when the backend is on, so shared links are unchanged while off
       shareUrl: `${location.origin}${location.pathname}?seed=${seed}${isDaily ? `&mode=${dailyMode}` : ''}${TELEMETRY_ENDPOINT ? `&utm_source=${isDaily ? 'challenge' : 'share'}` : ''}`,
       daily: isDaily ? { num: dailyNum, mode: dailyMode, best: getDailyBest(dailyNum, dailyMode), isBest: newDailyBest, streak: getStreak(Date.now()) } : null,
+      newUnlock: newUnlock ? `${newUnlock.name} — ${newUnlock.desc}` : null,
       onFeedback: (input) => submitFeedback(input, fbCtx),
       onShare: (method) => track('share_click', { is_daily: isDaily, method, score: state.score }),
       onBoard: isDaily ? () => fetchBoard(dailyNum, dailyMode) : undefined,
@@ -1152,6 +1170,7 @@ async function start() {
     tickMouseAim(dt); // release a stale mouse aim after the cursor has been idle past the timeout
     musicTimer += dt; // ramp the music's brightness with the on-screen threat (throttled)
     if (musicTimer >= 0.4) { musicTimer = 0; sfx.setMusicIntensity(Math.min(1, swarm.count / 250), activeBosses > 0); }
+    if (city) { const pz0 = city.zoneAt(player.position.x, player.position.z); if (pz0 > runMaxZone) runMaxZone = pz0; } // meta milestone tracking
 
     const mv = getMove();
     // engage on first move/aim, OR automatically once the spawn grace passes so an IDLE player still
