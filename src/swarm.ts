@@ -113,6 +113,7 @@ export class Swarm {
 
   readonly mesh: THREE.InstancedMesh;
   private readonly pulse = new Float32Array(BOB_BUCKETS);
+  private readonly sway = new Float32Array(BOB_BUCKETS); // signed L↔R shamble weave (walk look)
 
   constructor(max: number, scene: THREE.Scene) {
     this.max = max;
@@ -234,7 +235,7 @@ export class Swarm {
    * stacking. Returns contact damage dealt to the player this frame.
    */
   update(dt: number, time: number, playerX: number, playerZ: number, grid: SpatialGrid, blockGrid: BlockGrid | null = null): number {
-    const { posX, posZ, speed, radius, dps, bob, count, pulse, flash, baseCol, age, baseScale } = this;
+    const { posX, posZ, speed, radius, dps, bob, count, pulse, sway, flash, baseCol, age, baseScale } = this;
     const m = this.mesh.instanceMatrix.array as Float32Array;
     const col = this.mesh.instanceColor!.array as Float32Array;
     const { cellStart, indices, dim } = grid;
@@ -248,7 +249,9 @@ export class Swarm {
 
     // 64-entry pulse LUT replaces 20k Math.sin calls for the cosmetic bob
     for (let b = 0; b < BOB_BUCKETS; b++) {
-      pulse[b] = 1 + 0.3 * Math.abs(Math.sin(time * 4 + b * ((Math.PI * 2) / BOB_BUCKETS)));
+      const ph = b * ((Math.PI * 2) / BOB_BUCKETS);
+      pulse[b] = 1 + 0.34 * Math.abs(Math.sin(time * 4 + ph)); // vertical step bounce (was 0.3)
+      sway[b] = Math.sin(time * 5 + ph);                       // signed L↔R shamble weave
     }
 
     for (let i = 0; i < count; i++) {
@@ -316,7 +319,10 @@ export class Swarm {
       m[o] = uz * sc; m[o + 2] = -ux * sc;
       m[o + 5] = sc;
       m[o + 8] = ux * sc; m[o + 10] = uz * sc;
-      m[o + 12] = nx;
+      // shamble: a render-only lateral weave (perp to the facing) — the SIM pos stays nx/nz so the
+      // hitbox doesn't move; capped per size so big enemies don't drift far from where you shoot.
+      const sw = sway[bob[i]] * (r < 2 ? r : 2) * 0.12;
+      m[o + 12] = nx - uz * sw;
       // climbable mountain: lift enemies onto the cone slope (cheap distance check; 0 for the far majority)
       let gy = 0;
       if (this.climbH > 0) {
@@ -324,7 +330,7 @@ export class Swarm {
         if (cd2 < this.climbR2) gy = this.climbH * (1 - Math.sqrt(cd2) * this.climbInvR);
       }
       m[o + 13] = r * pulse[bob[i]] + gy;
-      m[o + 14] = nz;
+      m[o + 14] = nz + ux * sw;
 
       // hit-flash: blend toward white while active, snap back to base when done
       if (flash[i] > 0) {

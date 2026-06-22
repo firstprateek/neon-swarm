@@ -31,13 +31,21 @@ export function makeSurvivor(a: Avatar): THREE.Group {
     mesh.position.set(x, y, z);
     g.add(mesh);
   };
-  // legs / torso / arms / head — upright, confident stance
-  part(new THREE.BoxGeometry(0.17, 0.58, 0.19), legsMat, 0.11, 0.29, 0);
-  part(new THREE.BoxGeometry(0.17, 0.58, 0.19), legsMat, -0.11, 0.29, 0);
-  part(new THREE.BoxGeometry(0.44, 0.56, 0.27), clothes, 0, 0.86, 0);
-  part(new THREE.BoxGeometry(0.14, 0.52, 0.16), clothes, 0.31, 0.85, 0.02);
-  part(new THREE.BoxGeometry(0.14, 0.52, 0.16), clothes, -0.31, 0.85, 0.02);
-  part(new THREE.BoxGeometry(0.28, 0.28, 0.28), skin, 0, 1.31, 0.02);
+  // legs + arms are PIVOTED limbs — the geometry is offset so each mesh's origin sits at the hip /
+  // shoulder, letting the walk cycle (main.ts) swing them forward/back. torso + head are static.
+  const limb = (w: number, h: number, d: number, m: THREE.Material, x: number, pivotY: number, z = 0): THREE.Mesh => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d).translate(0, -h / 2, 0), m);
+    mesh.position.set(x, pivotY, z);
+    g.add(mesh);
+    return mesh;
+  };
+  const legR = limb(0.17, 0.58, 0.19, legsMat, 0.11, 0.58);    // hip at y=0.58 (feet reach y=0)
+  const legL = limb(0.17, 0.58, 0.19, legsMat, -0.11, 0.58);
+  part(new THREE.BoxGeometry(0.44, 0.56, 0.27), clothes, 0, 0.86, 0);      // torso
+  const armR = limb(0.14, 0.52, 0.16, clothes, 0.31, 1.11, 0.02);          // shoulder at y=1.11
+  const armL = limb(0.14, 0.52, 0.16, clothes, -0.31, 1.11, 0.02);
+  part(new THREE.BoxGeometry(0.28, 0.28, 0.28), skin, 0, 1.31, 0.02);      // head
+  (g.userData as { rig?: { legL: THREE.Mesh; legR: THREE.Mesh; armL: THREE.Mesh; armR: THREE.Mesh } }).rig = { legL, legR, armL, armR };
 
   // per-survivor silhouette kit so they're distinct from above
   if (a.name === 'RANGER') {

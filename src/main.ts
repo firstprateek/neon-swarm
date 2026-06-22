@@ -266,6 +266,8 @@ async function start() {
   glow.position.y = 3;
   player.add(glow);
   let survivor: THREE.Group | null = null;
+  let rig: { legL: THREE.Mesh; legR: THREE.Mesh; armL: THREE.Mesh; armR: THREE.Mesh } | null = null;
+  let walkPhase = 0, walkAmt = 0; // gait cycle phase + eased blend (0 idle … 1 walking)
   function setAvatar(idx: number): void {
     if (survivor) {
       player.remove(survivor);
@@ -277,6 +279,7 @@ async function start() {
     }
     const a = AVATARS[idx];
     survivor = makeSurvivor(a);
+    rig = (survivor.userData as { rig?: typeof rig }).rig ?? null;
     player.add(survivor);
     ringMat.color.setHex(a.accent);
     glow.color.setHex(a.accent);
@@ -1003,14 +1006,17 @@ async function start() {
     });
     const canvas = renderer.domElement;
     canvas.addEventListener('contextmenu', e => e.preventDefault());
-    canvas.addEventListener('mousedown', e => { if (e.button === 1) e.preventDefault(); }); // no middle-click autoscroll
-    canvas.addEventListener('pointerdown', e => {
+    // mousedown (NOT pointerdown): pointerdown only fires on the first button down, so RMB pressed
+    // while LMB is already held never registered — mousedown fires for every button independently,
+    // letting you fire a missile/nuke WHILE holding the gun.
+    canvas.addEventListener('mousedown', e => {
+      if (e.button === 1) e.preventDefault(); // no middle-click autoscroll
       if (!canAct()) return;
       if (e.button === 0) setFireHeld(true);                          // LMB = fire the gun (hold)
       else if (e.button === 2) { e.preventDefault(); fireMissile(); } // RMB = missile
-      else if (e.button === 1) { e.preventDefault(); fireNuke(); }    // MMB = nuke
+      else if (e.button === 1) fireNuke();                            // MMB = nuke
     });
-    window.addEventListener('pointerup', e => { if (e.button === 0) setFireHeld(false); });
+    window.addEventListener('mouseup', e => { if (e.button === 0) setFireHeld(false); });
     window.addEventListener('blur', () => setFireHeld(false));
   }
 
@@ -1195,6 +1201,15 @@ async function start() {
       player.position.x = rp.x; player.position.z = rp.z;
     } else {
       player.position.x = tgtX; player.position.z = tgtZ;
+    }
+    // WALK CYCLE: swing the hip/shoulder-pivoted legs + arms while moving (eased in/out), settle to neutral when idle
+    if (rig) {
+      const moving = Math.hypot(mv.x, mv.z) > 0.05 || dashTime > 0;
+      walkAmt += ((moving ? 1 : 0) - walkAmt) * Math.min(1, dt * 12);
+      walkPhase += dt * 10; // gait cadence
+      const swing = Math.sin(walkPhase) * 0.7 * walkAmt;
+      rig.legR.rotation.x = swing; rig.legL.rotation.x = -swing;
+      rig.armR.rotation.x = -swing * 0.7; rig.armL.rotation.x = swing * 0.7; // arms counter-swing
     }
     // facing: in MANUAL aim modes (gunLock off) the body faces the AIM input
     // (mouse / aim-stick) — true twin-stick; otherwise it follows movement.
