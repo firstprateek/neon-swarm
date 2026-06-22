@@ -436,6 +436,7 @@ async function start() {
   let dashDirX = 0, dashDirZ = 1;
   let iframes = 0;    // invulnerability window (during/after dash)
   const DASH_COOLDOWN = 2.2, DASH_TIME = 0.16, DASH_SPEED = 70, DASH_IFRAMES = 0.3;
+  const DASH_STRIKE_DPS = 600, DASH_KNOCK = 18; // phase-strike: shred chaff + shove enemies you dash through (bosses immune)
   const SPAWN_GRACE = 0.8; // spawn protection: i-frames at deploy + auto-engage auto-fire after this delay
 
   // apply persisted audio settings (URL ?mute still wins)
@@ -902,6 +903,19 @@ async function start() {
     hud.toast('☢ NUCLEAR STRIKE');
   }
 
+  // dash phase-strike: while dashing, damage + knock back every (non-boss) enemy you overlap, so the
+  // panic button becomes an offensive repositioning tool. Brief + on cooldown, so the O(count) scan is cheap.
+  function dashStrike(dt: number): void {
+    const px = player.position.x, pz = player.position.z, reach = PLAYER_RADIUS + 0.7;
+    for (let i = 0; i < swarm.count; i++) {
+      if (swarm.hp[i] <= 0 || swarm.type[i] === BOSS_TYPE) continue;
+      const dx = swarm.posX[i] - px, dz = swarm.posZ[i] - pz, rr = reach + swarm.radius[i];
+      if (dx * dx + dz * dz > rr * rr) continue;
+      swarm.hp[i] -= DASH_STRIKE_DPS * dt;            // flat DPS while overlapped — the death sweep handles the kill
+      const d = Math.hypot(dx, dz) || 1, k = DASH_KNOCK * dt;
+      swarm.posX[i] += (dx / d) * k; swarm.posZ[i] += (dz / d) * k; // shove outward
+    }
+  }
   function doDash(): void {
     if (dashCd > 0) return;
     const mv = getMove();
@@ -1126,6 +1140,7 @@ async function start() {
       dashTime -= dt;
       tgtX += dashDirX * DASH_SPEED * dt;
       tgtZ += dashDirZ * DASH_SPEED * dt;
+      dashStrike(dt); // shred + knock back enemies in the dash path
     }
     if (blockGrid) {
       // city collision: axis-slide along walls; substepped so a dash can't tunnel
