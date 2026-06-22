@@ -757,7 +757,10 @@ async function start() {
 
     if (swarm.count > MAX_ENEMIES - 64) return;
 
-    spawnAcc += dt * spawnRate(t);
+    // ZONE PRESSURE: the city itself drives difficulty — downtown is the calm core, the suburb steps
+    // it up, the national park is the danger frontier. Pushing outward = more enemies (+ better loot below).
+    const zonePressure = city ? ([1.0, 1.35, 1.8][city.zoneAt(player.position.x, player.position.z)] ?? 1.0) : 1.0;
+    spawnAcc += dt * spawnRate(t) * zonePressure;
     while (spawnAcc >= 1) {
       spawnAcc -= 1;
       const a = srand() * Math.PI * 2;
@@ -859,9 +862,10 @@ async function start() {
     const base = Math.atan2(dirX, dirZ) - ((n - 1) / 2) * spread;
     const crit = srand() < CRIT_CHANCE;          // seeded → same seed+inputs reproduce the same crits
     const dmg = crit ? state.dmg * CRIT_MULT : state.dmg;
+    const pierce = state.pierce + (city && city.groundHeight(px, pz) > 6 ? 2 : 0); // HIGH GROUND: +pierce up the mountain
     for (let k = 0; k < n; k++) {
       const a = base + k * spread;
-      bullets.fire(px, pz, Math.sin(a), Math.cos(a), state.bulletSpeed, dmg, state.pierce);
+      bullets.fire(px, pz, Math.sin(a), Math.cos(a), state.bulletSpeed, dmg, pierce);
     }
     muzzle = 1;
     if (crit) {
@@ -1259,6 +1263,8 @@ async function start() {
       state.kills++;
       registerKill(state, type); // combo + score
       const t = ENEMY_TYPES[type];
+      // ZONE LOOT: gems are worth more the further out you fight — risk/reward for the danger frontier
+      const lootMult = city ? ([1.0, 1.15, 1.4][city.zoneAt(x, z)] ?? 1.0) : 1.0;
       // ammo DROPS from the tough enemies: brute +1 missile, heavy +2, boss +10 + a nuke
       const drop = ammoDropFor(type);
       if (drop.missiles || drop.nukes) {
@@ -1271,7 +1277,7 @@ async function start() {
         activeBosses--;
         // bosses pay out a cluster of gems and a big explosion
         for (let g = 0; g < 6; g++) {
-          gems.spawn(x + (srand() - 0.5) * 3, z + (srand() - 0.5) * 3, Math.ceil(xp / 6));
+          gems.spawn(x + (srand() - 0.5) * 3, z + (srand() - 0.5) * 3, Math.ceil(xp * lootMult / 6));
         }
         particles.burst(x, t.radius, z, t.color, 90, 18);
         addShake(1.4);
@@ -1279,7 +1285,7 @@ async function start() {
         sfx.sfxBossDie();
         hud.toast('BOSS DOWN — +10 🚀  +1 ☢');
       } else {
-        gems.spawn(x, z, xp);
+        gems.spawn(x, z, Math.max(1, Math.round(xp * lootMult)));
         particles.burst(x, t.radius, z, t.color, type >= 2 ? 26 : 10);
         sfx.sfxKill(); // throttled internally
       }
