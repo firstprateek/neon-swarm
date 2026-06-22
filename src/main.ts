@@ -436,6 +436,7 @@ async function start() {
   let dashDirX = 0, dashDirZ = 1;
   let iframes = 0;    // invulnerability window (during/after dash)
   const DASH_COOLDOWN = 2.2, DASH_TIME = 0.16, DASH_SPEED = 70, DASH_IFRAMES = 0.3;
+  const SPAWN_GRACE = 0.8; // spawn protection: i-frames at deploy + auto-engage auto-fire after this delay
 
   // apply persisted audio settings (URL ?mute still wins)
   sfx.setVolume(settings.volume / 100);
@@ -447,6 +448,7 @@ async function start() {
     saveSettings(settings);
     setAvatar(idx);
     started = true;
+    iframes = SPAWN_GRACE; // brief invulnerability so the first-frame spawn swarm can't instantly CONSUME you
     buildWorld(); // generate the collidable city from the now-final seed
     touch?.setFireVisible(!settings.autoFire); // mobile FIRE button only when auto-fire is off
     applyAimMode(); // reticle cursor (desktop) / aim stick (mobile) for manual modes
@@ -1107,7 +1109,9 @@ async function start() {
     if (iframes > 0) iframes -= dt;
 
     const mv = getMove();
-    if (!engaged && (mv.x !== 0 || mv.z !== 0 || isAimActive())) engaged = true; // first move/aim "starts" the run
+    // engage on first move/aim, OR automatically once the spawn grace passes so an IDLE player still
+    // auto-fires and defends itself (it was previously drained to 0 HP at ~12s having never fired)
+    if (!engaged && (mv.x !== 0 || mv.z !== 0 || isAimActive() || state.time >= SPAWN_GRACE)) engaged = true;
     let tgtX = player.position.x + mv.x * state.moveSpeed * dt;
     let tgtZ = player.position.z + mv.z * state.moveSpeed * dt;
     // dash burst (fast, brief)
@@ -1184,7 +1188,9 @@ async function start() {
     const explicitFire = isDown(settings.keybinds, heldKeys(), 'fire')
       || (touch?.isFiring() ?? false)
       || fireHeld;
-    const wantFire = explicitFire || (settings.autoFire && engaged);
+    // gunLock auto-aims the nearest enemy and fireVolley() returns when there's none, so it never
+    // looses a stray spawn bullet — let it fire from t=0; only the manual-facing modes wait for engage.
+    const wantFire = explicitFire || (settings.autoFire && (engaged || settings.gunLock));
     if (wantFire) {
       fireAcc += dt * state.fireRate;
       if (fireAcc > 4) fireAcc = 4;
