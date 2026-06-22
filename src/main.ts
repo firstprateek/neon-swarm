@@ -431,6 +431,7 @@ async function start() {
   // active abilities
   let missileRefillTimer = MISSILE_REFILL;
   let dashCd = 0;     // dash cooldown remaining
+  let musicTimer = 0; // throttles music-intensity updates
   let dashTime = 0;   // dash burst remaining
   let infinite = false; // 'padirules' cheat: infinite dash + missiles + nukes (topped up each tick)
   let dashDirX = 0, dashDirZ = 1;
@@ -455,6 +456,8 @@ async function start() {
     touch?.setFireVisible(!settings.autoFire); // mobile FIRE button only when auto-fire is off
     applyAimMode(); // reticle cursor (desktop) / aim stick (mobile) for manual modes
     sfx.initAudio();
+    sfx.setMusicVolume(settings.music / 100);
+    sfx.startMusic(); // procedural neon drone for the run
     runsThisSession++;
     track('run_start', {
       mode: isDaily ? dailyMode : 'free', survivor: AVATARS[idx].name,
@@ -654,6 +657,7 @@ async function start() {
     bloomAllowed = settings.bloom;
     sfx.setMuted(!settings.sound);
     sfx.setVolume(settings.volume / 100);
+    sfx.setMusicVolume(settings.music / 100); // wire the (previously dead) Music slider
     applyQuality();
     saveSettings(settings);
   }
@@ -830,6 +834,8 @@ async function start() {
 
   // --- firing ---
   let fireAcc = 0;
+  const CRIT_CHANCE = 0.15, CRIT_MULT = 2.2; // gun crit: a seeded chance per volley for ×dmg + a "CRIT" pop
+  let lastCritShown = 0; // throttles the crit floater so it can't spam at high fire rate
   let fireHeld = false; // desktop FIRE key/mouse held (manual auto-fire-off mode)
   const setFireHeld = (v: boolean): void => { fireHeld = v; };
   let engaged = false;  // suppress auto-fire until the player first moves/aims (no stray spawn bullet)
@@ -851,12 +857,23 @@ async function start() {
     const n = state.projectiles;
     const spread = 0.14;
     const base = Math.atan2(dirX, dirZ) - ((n - 1) / 2) * spread;
+    const crit = srand() < CRIT_CHANCE;          // seeded → same seed+inputs reproduce the same crits
+    const dmg = crit ? state.dmg * CRIT_MULT : state.dmg;
     for (let k = 0; k < n; k++) {
       const a = base + k * spread;
-      bullets.fire(px, pz, Math.sin(a), Math.cos(a), state.bulletSpeed, state.dmg, state.pierce);
+      bullets.fire(px, pz, Math.sin(a), Math.cos(a), state.bulletSpeed, dmg, state.pierce);
     }
     muzzle = 1;
-    sfx.sfxFire(); // throttled internally
+    if (crit) {
+      sfx.sfxCrit();
+      if (state.time - lastCritShown > 0.25) { // throttle the pop
+        lastCritShown = state.time;
+        const sp = projectToScreen(px + dirX * 4, 1.6, pz + dirZ * 4);
+        if (sp) hud.floatText(sp.sx, sp.sy, '✦ CRIT', '#ffe45e');
+      }
+    } else {
+      sfx.sfxFire(); // throttled internally
+    }
   }
 
   // --- active abilities ---
@@ -994,6 +1011,7 @@ async function start() {
     player.visible = false;
     addShake(2.0);
     sfx.sfxDeath();
+    sfx.stopMusic(); // silence the drone on death (the next deploy restarts it)
     hud.hideBoss();
     const newDailyBest = isDaily ? recordDailyScore(dailyNum, dailyMode, state.score) : false;
     const seed = getSeed();
@@ -1128,6 +1146,8 @@ async function start() {
     // part of the dash action; the wall-clock cooldown/refill are in tickRealtime
     if (iframes > 0) iframes -= dt;
     tickMouseAim(dt); // release a stale mouse aim after the cursor has been idle past the timeout
+    musicTimer += dt; // ramp the music's brightness with the on-screen threat (throttled)
+    if (musicTimer >= 0.4) { musicTimer = 0; sfx.setMusicIntensity(Math.min(1, swarm.count / 250), activeBosses > 0); }
 
     const mv = getMove();
     // engage on first move/aim, OR automatically once the spawn grace passes so an IDLE player still

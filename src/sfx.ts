@@ -121,3 +121,71 @@ export function sfxBossDie(): void {
 export function sfxDeath(): void {
   voice({ freq: 440, slideTo: 60, dur: 0.9, type: 'sawtooth', gain: 0.2 });
 }
+
+export function sfxCrit(): void {
+  if (!throttle('crit', 60)) return;
+  voice({ freq: 1240, slideTo: 1860, dur: 0.06, type: 'square', gain: 0.07 });
+  voice({ freq: 1860, dur: 0.05, type: 'sine', gain: 0.05, delay: 0.02 });
+}
+
+// --- procedural MUSIC bed: an evolving neon drone whose brightness ramps with the on-screen threat.
+// No assets, no scheduler — a detuned saw/sub pad through a slow-LFO low-pass filter (a 20-min trance
+// bed). The Music slider sets its level; intensity (enemy pressure) opens the filter; a boss tenses it. ---
+let musicGain: GainNode | null = null;
+let musicFilter: BiquadFilterNode | null = null;
+let musicNodes: OscillatorNode[] = [];
+let musicVol = 0.35; // 0..1 from the Music slider
+let musicOn = false;
+let bossMode = false;
+
+/** Music-slider level (0..1). Music sits UNDER the SFX (× 0.5). */
+export function setMusicVolume(v: number): void {
+  musicVol = Math.max(0, Math.min(1, v));
+  if (ctx && musicGain) musicGain.gain.setTargetAtTime(musicOn ? musicVol * 0.5 : 0.0001, ctx.currentTime, 0.4);
+}
+
+/** start the drone (idempotent) — call after initAudio() on deploy */
+export function startMusic(): void {
+  if (!ctx || !master || muted || musicOn) return;
+  try {
+    musicGain = ctx.createGain();
+    musicGain.gain.value = 0.0001;
+    musicFilter = ctx.createBiquadFilter();
+    musicFilter.type = 'lowpass';
+    musicFilter.frequency.value = 300;
+    musicFilter.Q.value = 6;
+    musicFilter.connect(musicGain);
+    musicGain.connect(master);
+    const base = 55; // A1
+    for (const [mult, det, type, g] of [[1, 0, 'sine', 0.5], [1, -5, 'sawtooth', 0.16], [1.5, 4, 'sawtooth', 0.13], [2, -3, 'triangle', 0.12]] as const) {
+      const o = ctx.createOscillator();
+      o.type = type; o.frequency.value = base * mult; o.detune.value = det;
+      const vg = ctx.createGain(); vg.gain.value = g;
+      o.connect(vg); vg.connect(musicFilter);
+      o.start();
+      musicNodes.push(o);
+    }
+    const lfo = ctx.createOscillator(); lfo.frequency.value = 0.06; // slow breathing
+    const lfoG = ctx.createGain(); lfoG.gain.value = 110;
+    lfo.connect(lfoG); lfoG.connect(musicFilter.frequency); lfo.start();
+    musicNodes.push(lfo);
+    musicOn = true;
+    setMusicVolume(musicVol);
+  } catch { musicOn = false; }
+}
+
+/** threat 0..1 opens the filter (brighter = tenser); boss adds resonance + brightness */
+export function setMusicIntensity(threat: number, boss = false): void {
+  if (!ctx || !musicFilter || !musicOn) return;
+  const t = ctx.currentTime, x = Math.max(0, Math.min(1, threat));
+  musicFilter.frequency.setTargetAtTime(300 + x * (boss ? 1500 : 950), t, 1.2);
+  if (boss !== bossMode) { bossMode = boss; musicFilter.Q.setTargetAtTime(boss ? 11 : 6, t, 0.8); }
+}
+
+export function stopMusic(): void {
+  if (!musicOn) return;
+  for (const o of musicNodes) { try { o.stop(); } catch { /* */ } }
+  musicNodes = []; musicOn = false; bossMode = false;
+  try { musicGain?.disconnect(); } catch { /* */ }
+  musicGain = null; musicFilter = null;
+}
