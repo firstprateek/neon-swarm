@@ -976,6 +976,14 @@ async function start() {
 
   // on-screen touch controls (joystick + ability buttons), only on coarse-pointer devices
   const touch = isTouch ? createTouch({ fireMissile, fireNuke, doDash, canAct }) : null;
+  if (touch) {
+    // a resize/rotation/keyboard-close invalidates a held stick's base position — drop the
+    // sticks rather than let a stale clamp drift the player (re-press re-centers instantly)
+    const resetSticks = (): void => { touch.resetMove(); touch.resetAim(); };
+    window.addEventListener('resize', resetSticks);
+    window.addEventListener('orientationchange', resetSticks);
+    window.visualViewport?.addEventListener('resize', resetSticks);
+  }
 
   window.addEventListener('keydown', e => {
     if (!canAct()) return;

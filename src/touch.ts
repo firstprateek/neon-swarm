@@ -21,6 +21,8 @@ export interface TouchControls {
   setFireVisible(on: boolean): void; // show the FIRE button (auto-fire OFF only)
   setAimMode(on: boolean): void;     // manual-aim: show the right-thumb aim stick (move moves left)
   isFiring(): boolean;               // true while the FIRE button OR the aim stick is held
+  resetMove(): void;                 // drop a held move stick (viewport resize/rotation invalidates its base)
+  resetAim(): void;                  // same for the aim stick
   el: HTMLElement; // exposed for tests
 }
 
@@ -42,8 +44,16 @@ export function createTouch(deps: TouchDeps): TouchControls {
   let stickId = -1;
   let baseX = 0, baseY = 0; // current base center in client px
 
-  const insetClampX = (x: number) => Math.min(Math.max(x, 70), innerWidth - Math.max(24, safeInset('right')));
-  const insetClampY = (y: number) => Math.min(Math.max(y, 70), innerHeight - Math.max(24, safeInset('bottom')));
+  // clamp to the VISIBLE viewport — visualViewport tracks the iOS keyboard/dynamic
+  // toolbar while innerWidth/innerHeight lag it; read inside the call so values stay fresh
+  const insetClampX = (x: number) => {
+    const w = window.visualViewport?.width ?? innerWidth;
+    return Math.min(Math.max(x, 70), w - Math.max(24, safeInset('right')));
+  };
+  const insetClampY = (y: number) => {
+    const h = window.visualViewport?.height ?? innerHeight;
+    return Math.min(Math.max(y, 70), h - Math.max(24, safeInset('bottom')));
+  };
 
   function placeBase(px: number, py: number): void {
     baseX = insetClampX(px); baseY = insetClampY(py);
@@ -94,6 +104,15 @@ export function createTouch(deps: TouchDeps): TouchControls {
   };
   zone.addEventListener('pointerup', endStick);
   zone.addEventListener('pointercancel', endStick); // iOS edge-swipe steal
+  const resetMove = (): void => {
+    if (stickId !== -1) {
+      releaseCapture(zone, stickId);
+      stickId = -1;
+      stick.classList.remove('live');
+      knob.style.transform = 'translate(0,0)';
+    }
+    clearTouchMove(); // MUST clear, or a stale vector drifts the player under an overlay
+  };
 
   // ---- aim joystick (manual-aim modes; bottom-RIGHT floating, also fires) ----
   const aimZone = document.getElementById('tc-aim-zone') as HTMLElement;
@@ -146,7 +165,7 @@ export function createTouch(deps: TouchDeps): TouchControls {
   aimZone.addEventListener('pointerup', endAim);
   aimZone.addEventListener('pointercancel', endAim);
   const resetAim = (): void => {
-    if (aimId !== -1) { aimId = -1; aimStick.classList.remove('live'); aimKnob.style.transform = 'translate(0,0)'; }
+    if (aimId !== -1) { releaseCapture(aimZone, aimId); aimId = -1; aimStick.classList.remove('live'); aimKnob.style.transform = 'translate(0,0)'; }
     aimFiring = false;
     clearTouchAim();
   };
@@ -169,17 +188,21 @@ export function createTouch(deps: TouchDeps): TouchControls {
 
   // ---- FIRE button (held = sustained fire; only shown when auto-fire is OFF) ----
   const bFire = document.getElementById('tc-fire') as HTMLButtonElement;
-  let fireVisible = false, firingHeld = false;
+  let fireVisible = false, firingHeld = false, fireId = -1;
   const fireDown = (e: PointerEvent): void => {
     e.preventDefault(); e.stopPropagation(); // never also start the joystick
-    bFire.classList.add('down'); firingHeld = true;
+    bFire.classList.add('down'); firingHeld = true; fireId = e.pointerId;
     try { bFire.setPointerCapture(e.pointerId); } catch { /* fast-tap race */ }
   };
-  const fireUp = (): void => { firingHeld = false; bFire.classList.remove('down'); };
+  const fireUp = (): void => { firingHeld = false; fireId = -1; bFire.classList.remove('down'); };
   bFire.addEventListener('pointerdown', fireDown, { passive: false });
   bFire.addEventListener('pointerup', fireUp);
   bFire.addEventListener('pointercancel', fireUp);
   bFire.addEventListener('pointerleave', fireUp);
+  const resetFire = (): void => {
+    if (fireId !== -1) releaseCapture(bFire, fireId);
+    fireUp();
+  };
 
   // dirty-check cache (per-frame call; avoid layout churn like hud.ts)
   const lastState = { m: -2, n: -2, d: -2 };
@@ -189,20 +212,17 @@ export function createTouch(deps: TouchDeps): TouchControls {
     show(): void { root.classList.add('active'); },
     hide(): void {
       root.classList.remove('active');
-      if (stickId !== -1) {
-        stickId = -1;
-        stick.classList.remove('live');
-        knob.style.transform = 'translate(0,0)';
-      }
-      resetAim();
-      firingHeld = false; bFire.classList.remove('down');
-      clearTouchMove(); // MUST clear, or a stale vector drifts the player under an overlay
+      resetMove(); // also releases any held pointer captures — a capture that
+      resetAim();  // outlives the layer would swallow the overlay's first tap
+      resetFire();
     },
     setFireVisible(on: boolean): void {
       fireVisible = on;
       bFire.classList.toggle('tc-hidden', !on);
-      if (!on) firingHeld = false;
+      if (!on) resetFire();
     },
+    resetMove,
+    resetAim,
     setAimMode(on: boolean): void {
       root.classList.toggle('aim-mode', on);
       if (!on) resetAim(); // tearing down — drop any held aim + fire state
@@ -231,4 +251,8 @@ export function createTouch(deps: TouchDeps): TouchControls {
 function safeInset(side: 'bottom' | 'right'): number {
   const v = getComputedStyle(document.documentElement).getPropertyValue(`--safe-${side}`);
   return parseFloat(v) || 0;
+}
+
+function releaseCapture(el: Element, id: number): void {
+  try { el.releasePointerCapture(id); } catch { /* pointer already gone / never captured */ }
 }
