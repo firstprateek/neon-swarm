@@ -458,6 +458,8 @@ export interface RunInfo {
   onFeedback?: (input: FeedbackInput) => void;
   /** fired when the player shares (for telemetry) — no-op when the backend is off */
   onShare?: (method: 'web_share' | 'clipboard') => void;
+  /** in-app restart (no page reload); falls back to location.reload() when absent */
+  onRestart?: () => void;
   /** async global-leaderboard fetch (daily only); resolves null when the backend is off */
   onBoard?: () => Promise<import('./leaderboard').Board | null>;
 }
@@ -503,6 +505,7 @@ export function showGameOver(state: GameState, info: RunInfo): void {
     : `NEON SWARM 🧟 — ${state.score.toLocaleString()} pts\n${summary}\nSame seed — can you beat my run? ${info.shareUrl}`;
   const shareBtn = el<HTMLButtonElement>('share-btn');
   shareBtn.textContent = '⚔ CHALLENGE A FRIEND';
+  let copied = false; // '✓ LINK COPIED!' must survive the async rank fetch below
   shareBtn.onclick = async () => {
     try {
       const nav = navigator as Navigator & { share?: (d: { text: string }) => Promise<void> };
@@ -511,14 +514,19 @@ export function showGameOver(state: GameState, info: RunInfo): void {
         info.onShare?.('web_share');
       } else {
         await navigator.clipboard.writeText(shareText);
+        copied = true;
         shareBtn.textContent = '✓ LINK COPIED!';
         info.onShare?.('clipboard');
       }
     } catch {
-      try { await navigator.clipboard.writeText(shareText); shareBtn.textContent = '✓ LINK COPIED!'; info.onShare?.('clipboard'); } catch { /* ignore */ }
+      try { await navigator.clipboard.writeText(shareText); copied = true; shareBtn.textContent = '✓ LINK COPIED!'; info.onShare?.('clipboard'); } catch { /* ignore */ }
     }
   };
-  el<HTMLButtonElement>('restart-btn').onclick = () => location.reload();
+  el<HTMLButtonElement>('restart-btn').onclick = () => {
+    gameoverOverlay.classList.add('hidden');
+    if (info.onRestart) info.onRestart();
+    else location.reload(); // not wired (tests / legacy callers) — old behaviour
+  };
 
   // feedback: one-tap emoji is a complete submit; SEND covers category/text-only.
   // Shown once per game-over, never nags, never gates restart.
@@ -562,7 +570,7 @@ export function showGameOver(state: GameState, info: RunInfo): void {
         (b.your_rank ? `<div class="bg-rank">YOU'RE #${b.your_rank.toLocaleString()} of ${b.total.toLocaleString()}</div>` : '') +
         (b.streak && b.streak > 1 ? `<div class="bg-streak">🔥 ${b.streak}-day streak</div>` : '') +
         (rival ? `<div class="bg-rival">⚔ Beat @${rival.handle ?? 'Anon'} by ${(rival.score - state.score).toLocaleString()}</div>` : '');
-      if (b.your_rank) shareBtn.textContent = `⚔ BRAG MY RANK #${b.your_rank}`;
+      if (b.your_rank && !copied) shareBtn.textContent = `⚔ BRAG MY RANK #${b.your_rank}`;
     }).catch(() => { /* ignore */ });
   }
 

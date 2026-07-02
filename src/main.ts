@@ -492,37 +492,43 @@ async function start() {
     if (challengeSeed != null) deploy(settings.avatar);
     else hud.showAvatarSelect(AVATARS, settings.avatar, deploy);
   };
+  // title screen — also the landing spot for in-app restarts, so the daily
+  // num/best are recomputed on every show (a rerun can cross midnight)
+  function showTitle(): void {
+    hud.showStart({
+      challengeSeed,
+      daily: { num: dailyNumber(Date.now()), best: Math.max(...DIFFICULTIES.map(m => getDailyBest(dailyNumber(Date.now()), m))) },
+      onDaily: () => {
+        isDaily = true;
+        dailyNum = dailyNumber(Date.now());
+        setSeed(dailySeed(Date.now())); // global same-seed run for everyone today (mode never touches the seed)
+        const cards = DIFFICULTIES.map(m => ({
+          mode: m,
+          label: m.toUpperCase(),
+          tag: { easy: 'auto-fire · auto-aim', medium: 'auto-fire · manual aim', hard: 'fully manual' }[m],
+          best: getDailyBest(dailyNum, m),
+        }));
+        hud.showDailyModeSelect(dailyNum, cards, settings.dailyMode, (m) => {
+          dailyMode = m;
+          settings.dailyMode = m;
+          applyPreset(settings, m); // lock the assist flags for this run
+          saveSettings(settings);
+          startRun();
+        });
+      },
+      onFreePlay: () => {
+        // plain free play rolls a fresh seed; a challenge link re-seeds its exact
+        // run (matters after an in-app restart, where the first run advanced the stream)
+        setSeed(challengeSeed == null ? randomSeed() : challengeSeed);
+        startRun();
+      },
+    });
+  }
   track('title_shown', {
     challenge: challengeSeed != null, daily_num: dailyNumber(Date.now()),
     daily_best_local: Math.max(...DIFFICULTIES.map(m => getDailyBest(dailyNumber(Date.now()), m))),
   });
-  hud.showStart({
-    challengeSeed,
-    daily: { num: dailyNumber(Date.now()), best: Math.max(...DIFFICULTIES.map(m => getDailyBest(dailyNumber(Date.now()), m))) },
-    onDaily: () => {
-      isDaily = true;
-      dailyNum = dailyNumber(Date.now());
-      setSeed(dailySeed(Date.now())); // global same-seed run for everyone today (mode never touches the seed)
-      const cards = DIFFICULTIES.map(m => ({
-        mode: m,
-        label: m.toUpperCase(),
-        tag: { easy: 'auto-fire · auto-aim', medium: 'auto-fire · manual aim', hard: 'fully manual' }[m],
-        best: getDailyBest(dailyNum, m),
-      }));
-      hud.showDailyModeSelect(dailyNum, cards, settings.dailyMode, (m) => {
-        dailyMode = m;
-        settings.dailyMode = m;
-        applyPreset(settings, m); // lock the assist flags for this run
-        saveSettings(settings);
-        startRun();
-      });
-    },
-    onFreePlay: () => {
-      // a challenge link keeps its given seed; plain free play rolls a fresh one
-      if (challengeSeed == null) setSeed(randomSeed());
-      startRun();
-    },
-  });
+  showTitle();
 
   function togglePause(): void {
     if (!started || over || leveling) return; // can't pause pre-start, dead, or mid-level-up
@@ -718,7 +724,7 @@ async function start() {
   byId<HTMLButtonElement>('hud-gear').addEventListener('click', () => togglePause());
   byId<HTMLButtonElement>('pause-settings-btn').addEventListener('click', openSettings);
   byId<HTMLButtonElement>('resume-btn').addEventListener('click', () => togglePause());
-  byId<HTMLButtonElement>('pause-restart-btn').addEventListener('click', () => location.reload());
+  byId<HTMLButtonElement>('pause-restart-btn').addEventListener('click', () => resetRun());
 
   // tap the backdrop (outside the content) to close — mobile has no Esc key
   const pauseOverlayEl = byId('pause-overlay');
@@ -1098,7 +1104,57 @@ async function start() {
       onFeedback: (input) => submitFeedback(input, fbCtx),
       onShare: (method) => track('share_click', { is_daily: isDaily, method, score: state.score }),
       onBoard: isDaily ? () => fetchBoard(dailyNum, dailyMode) : undefined,
+      onRestart: resetRun,
     });
+  }
+
+  /** In-app restart: rewind everything a page reload used to reset by brute
+   *  force, then land back on the title screen — the next deploy() rebuilds
+   *  the world from whatever seed/mode the player picks there. */
+  function resetRun(): void {
+    // flow flags — the render loop idles like a fresh boot until the next deploy()
+    started = false; over = false; leveling = false; paused = false;
+    godMode = false; infinite = false; cheatBuf = '';
+    runTainted = false; // a fresh run is clean until a cheat taints it again
+    isDaily = false;    // re-armed by picking DAILY at the title screen
+    // run state: same object (the __dbg handle keeps its reference), fresh values
+    Object.assign(state, createState());
+    for (const u of UPGRADES) u.count = 0; // owned-counts live on the module, not GameState
+    // empty every pool + hide its instanced mesh (nothing redraws them while idle)
+    for (const p of [swarm, bullets, gems, particles, missiles]) {
+      p.count = 0; p.mesh.count = 0; p.mesh.visible = false;
+    }
+    drops.clear();
+    orbitals.mesh.visible = false; // level re-syncs from the fresh state on the next update
+    tesla.mesh.visible = false;    // stray bolt segments (≤0.18s life) fade out on the next run
+    drones.body.visible = false; drones.tracer.visible = false;
+    // spawn director + boss trackers
+    spawnAcc = 0; hordeTimer = 40; bossTimer = BOSS_INTERVAL; bossesSpawned = 0; activeBosses = 0;
+    prevBossHp = -1; bossDmgAccum = 0; bossDmgTimer = 0; comboMilestoneIdx = 0;
+    // abilities + combat feel
+    missileRefillTimer = MISSILE_REFILL; dashCd = 0; dashTime = 0; dashDirX = 0; dashDirZ = 1; iframes = 0;
+    shake = 0; hitStop = 0; muzzle = 0; glow.intensity = baseGlow;
+    fireAcc = 0; setFireHeld(false); engaged = false; lastCritShown = 0;
+    musicTimer = 0; runMaxZone = 0;
+    touch?.resetMove(); touch?.resetAim();
+    // player + camera back to the boot pose
+    facing = Math.PI; walkPhase = 0; walkAmt = 0;
+    if (rig) rig.legL.rotation.x = rig.legR.rotation.x = rig.armL.rotation.x = rig.armR.rotation.x = 0;
+    player.visible = true;
+    player.position.set(0, 0, 0);
+    player.rotation.set(0, 0, 0);
+    camera.position.set(0, 26, 15);
+    camera.lookAt(0, 0, 0);
+    (scene.fog as THREE.FogExp2).density = 0;
+    // tear the city down — the next deploy() generates a fresh one from the final seed
+    if (city) { disposeCity(scene, city); city = null; }
+    blockGrid = null;
+    swarm.setBlockGrid(null);
+    sfx.stopMusic(); // a pause-menu restart arrives with the run's music still playing
+    hud.hideBoss();
+    hud.hidePause();
+    closeSettings();
+    showTitle();
   }
 
   // debug/benchmark hook: spawn a ring of n enemies around the player
@@ -1124,6 +1180,7 @@ async function start() {
     bosses: () => ({ active: activeBosses, spawned: bossesSpawned }),
     flags: () => ({ started, over, leveling, paused }),
     togglePause,
+    resetRun,
     applyCheat,
     godMode: () => godMode,
     quality: () => ({ tier: quality.tier, label: QUALITY_TIERS[quality.tier].label, emaMs: +quality.emaMs.toFixed(2), bloom: bloomEnabled, pixelRatio: renderer.getPixelRatio() }),
