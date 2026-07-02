@@ -11,7 +11,7 @@ import { type Difficulty, DIFFICULTIES, flagsToPreset, coerceDifficulty } from '
 import { createTouch } from './touch';
 import { submitFeedback, flushFeedback, beaconFlush, deviceClass, APP_VERSION, type FeedbackCtx } from './feedback';
 import { SpatialGrid } from './spatial';
-import { Swarm, ENEMY_TYPES, BOSS_TYPE, HIT_FLASH, PLAYER_RADIUS } from './swarm';
+import { Swarm, ENEMY_TYPES, BOSS_TYPE, HIT_FLASH, PLAYER_RADIUS, phaseStrike } from './swarm';
 import { generateCity, disposeCity, resolveMove, cellBlocked, type City, type BlockGrid } from './city';
 import { Bullets, Gems, Particles, Missiles, Drops } from './combat';
 import { Blast } from './fx';
@@ -19,7 +19,7 @@ import { AmbientMotes } from './ambient';
 import { Orbitals, Tesla, Drones } from './weapons';
 import { Minimap } from './minimap';
 import { spawnRate, rollEnemyType, bossHp, hordeSize, BOSS_INTERVAL } from './director';
-import { createQuality, governQuality, QUALITY_TIERS, MAX_TIER } from './perf';
+import { createQuality, governQuality, gradeAmount, moteBudget, QUALITY_TIERS, MAX_TIER } from './perf';
 import { loadSettings, saveSettings, qualityTier, applyPreset, clampZoom, ZOOM_MAX, ZOOM_DEFAULT, type Settings, type QualityMode } from './settings';
 import { AVATARS, makeSurvivor } from './avatars';
 import { setSeed, getSeed, randomSeed, srand } from './rng';
@@ -28,7 +28,7 @@ import { track, initTelemetry, wireTelemetryLifecycle } from './telemetry';
 import { submitScore, flushScores, beaconFlushScores, fetchBoard } from './leaderboard';
 import { normNote, dprBucket, screenTier, refAllow, hostOnly, rotShareToken } from './telemetry-helpers';
 import { dailySeed, dailyNumber, getDailyBest, recordDailyScore, recordDailyPlayed, getStreak } from './daily';
-import { recordRun, unlockedIds, UNLOCKS } from './meta';
+import { recordRun, unlockedIds, applyStartingSecondaries, UNLOCKS } from './meta';
 import * as sfx from './sfx';
 import * as hud from './hud';
 
@@ -396,11 +396,12 @@ async function start() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, dprCap(tq.pixelRatioCap)));
     renderer.setSize(w, h);
     bloomEnabled = bloomAllowed && tq.bloom && !!post;
-    // atmosphere tiers DOWN with the governor so the 120fps target always wins
-    // the split-tone/desaturation/vignette grade is part of the optional ATMOSPHERE (off by default → clean screen)
-    gradeAmt.value = settings.atmosphere ? (quality.tier <= 1 ? 1.0 : quality.tier === 2 ? 0.6 : 0.0) : 0.0;
+    // atmosphere tiers DOWN with the governor so the 120fps target always wins;
+    // the grade + ash/embers are part of the optional ATMOSPHERE (off by default → clean
+    // screen) — gating lives in perf.ts (gradeAmount/moteBudget) so the selftest can pin it
+    gradeAmt.value = gradeAmount(quality.tier, settings.atmosphere);
     uDetail.value = quality.tier <= 1 ? 1.0 : quality.tier === 2 ? 0.5 : 0.0;
-    ambient.setBudget(settings.atmosphere ? ([260, 160, 90, 0][quality.tier] ?? 160) : 0); // drifting ash/embers — only with ATMOSPHERE on
+    ambient.setBudget(moteBudget(quality.tier, settings.atmosphere));
     city?.setVisualTier(quality.tier); // cosmetic city LOD only — collidable rects never change
     const gov = pinnedTier >= 0 ? 'fixed' : `${targetFps}fps target`;
     hud.setBackend(`${onWebGPU() ? 'WebGPU' : 'WebGL2'}${backendNote} · ${gov} · quality: ${tq.label}${bloomEnabled ? '' : ' (no bloom)'}`);
@@ -460,22 +461,11 @@ async function start() {
     setAvatar(idx);
     started = true;
     runMaxZone = 0;
-    if (isDaily) {
-      recordDailyPlayed(Date.now()); // advance the local daily streak the moment a daily run starts
-      // DAILY: explicitly clear meta-progression secondaries so a prior freeplay run
-      // in the same session can't leak unlocks into the equal-footing competition.
-      state.orbitalLevel = 0;
-      state.droneLevel = 0;
-      state.teslaLevel = 0;
-    } else {
-      // FREEPLAY only: apply earned capability unlocks (start with the secondaries you've unlocked).
-      // The daily never applies these — it stays an equal-footing competition.
-      const u = unlockedIds();
-      if (u.includes('orbital')) state.orbitalLevel = Math.max(state.orbitalLevel, 1);
-      if (u.includes('drone')) state.droneLevel = Math.max(state.droneLevel, 1);
-      if (u.includes('drone2')) state.droneLevel = Math.max(state.droneLevel, 2);
-      if (u.includes('tesla')) state.teslaLevel = Math.max(state.teslaLevel, 1);
-    }
+    if (isDaily) recordDailyPlayed(Date.now()); // advance the local daily streak the moment a daily run starts
+    // FREEPLAY: apply earned capability unlocks (start with the secondaries you've unlocked).
+    // DAILY: explicitly clears them instead, so a prior freeplay run in the same session
+    // can't leak unlocks into the equal-footing competition. (Pinned by the selftest.)
+    applyStartingSecondaries(state, isDaily);
     iframes = SPAWN_GRACE; // brief invulnerability so the first-frame spawn swarm can't instantly CONSUME you
     buildWorld(); // generate the collidable city from the now-final seed
     touch?.setFireVisible(!settings.autoFire); // mobile FIRE button only when auto-fire is off
@@ -977,28 +967,11 @@ async function start() {
   }
 
   // dash phase-strike: while dashing, damage + knock back every (non-boss) enemy you overlap, so the
-  // panic button becomes an offensive repositioning tool. Grid-local (like the missiles' detonate) so a
-  // max-density dash never scans the whole swarm. The grid is last frame's build, but its center matches
-  // (dashStrike runs before this frame's player move) and the +1 cell pad swallows a frame of enemy drift.
+  // panic button becomes an offensive repositioning tool. The grid is last frame's build, but its center
+  // matches (dashStrike runs before this frame's player move) and phaseStrike's +1 cell pad swallows a
+  // frame of enemy drift. Logic lives in swarm.ts (phaseStrike) so the selftest can pin it.
   function dashStrike(dt: number): void {
-    const px = player.position.x, pz = player.position.z, reach = PLAYER_RADIUS + 0.7, knock = DASH_KNOCK * dt;
-    const { cellStart, indices, dim } = grid;
-    const cells = Math.ceil(reach / grid.cellSize) + 1;
-    const cx = grid.cellX(px), cz = grid.cellZ(pz);
-    for (let gz = Math.max(0, cz - cells); gz <= Math.min(dim - 1, cz + cells); gz++) {
-      for (let gx = Math.max(0, cx - cells); gx <= Math.min(dim - 1, cx + cells); gx++) {
-        const c = gz * dim + gx;
-        for (let k = cellStart[c]; k < cellStart[c + 1]; k++) {
-          const i = indices[k];
-          if (i >= swarm.count || swarm.hp[i] <= 0 || swarm.type[i] === BOSS_TYPE) continue;
-          const dx = swarm.posX[i] - px, dz = swarm.posZ[i] - pz, rr = reach + swarm.radius[i];
-          if (dx * dx + dz * dz > rr * rr) continue;
-          swarm.hp[i] -= DASH_STRIKE_DPS * dt;          // flat DPS while overlapped — the death sweep handles the kill
-          const d = Math.hypot(dx, dz) || 1;
-          swarm.posX[i] += (dx / d) * knock; swarm.posZ[i] += (dz / d) * knock; // shove outward
-        }
-      }
-    }
+    phaseStrike(swarm, grid, player.position.x, player.position.z, PLAYER_RADIUS + 0.7, DASH_STRIKE_DPS * dt, DASH_KNOCK * dt);
   }
   function doDash(): void {
     if (dashCd > 0) return;

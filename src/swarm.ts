@@ -380,3 +380,31 @@ export class Swarm {
     return best;
   }
 }
+
+/**
+ * Dash phase-strike: damage + knock back every living NON-BOSS enemy whose disc
+ * overlaps the player disc (`reach`). Grid-local (like the missiles' detonate)
+ * so a max-density dash never scans the whole swarm — bosses are immune, dead
+ * enemies are left for the death sweep. `dmg`/`knock` arrive pre-scaled by dt
+ * (main.ts passes DASH_STRIKE_DPS*dt / DASH_KNOCK*dt each dash frame).
+ */
+export function phaseStrike(sw: Swarm, grid: SpatialGrid, px: number, pz: number, reach: number, dmg: number, knock: number): void {
+  const { cellStart, indices, dim } = grid;
+  const cells = Math.ceil(reach / grid.cellSize) + 1;
+  const cx = grid.cellX(px), cz = grid.cellZ(pz);
+  for (let gz = Math.max(0, cz - cells); gz <= Math.min(dim - 1, cz + cells); gz++) {
+    for (let gx = Math.max(0, cx - cells); gx <= Math.min(dim - 1, cx + cells); gx++) {
+      const c = gz * dim + gx;
+      for (let k = cellStart[c]; k < cellStart[c + 1]; k++) {
+        const i = indices[k];
+        if (i >= sw.count || sw.hp[i] <= 0 || sw.type[i] === BOSS_TYPE) continue;
+        const dx = sw.posX[i] - px, dz = sw.posZ[i] - pz, rr = reach + sw.radius[i];
+        if (dx * dx + dz * dz > rr * rr) continue;
+        sw.hp[i] -= dmg;                // flat DPS while overlapped — the death sweep handles the kill
+        const d = Math.hypot(dx, dz) || 1;
+        sw.posX[i] += (dx / d) * knock; // shove outward
+        sw.posZ[i] += (dz / d) * knock;
+      }
+    }
+  }
+}

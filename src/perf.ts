@@ -21,6 +21,21 @@ export const QUALITY_TIERS: QualityTier[] = [
 
 export const MAX_TIER = QUALITY_TIERS.length - 1;
 
+// --- ATMOSPHERE gating (off by default → clean screen) ---------------------
+// Both layers tier DOWN with the governor so the frame-rate target always wins,
+// and both are hard-zeroed whenever the settings.atmosphere flag is OFF.
+// Pure so the selftest can pin the gate; main.ts applyQuality() consumes them.
+
+/** split-tone/desaturation/vignette grade amount for a quality tier */
+export function gradeAmount(tier: number, atmosphere: boolean): number {
+  return atmosphere ? (tier <= 1 ? 1.0 : tier === 2 ? 0.6 : 0.0) : 0.0;
+}
+
+/** drifting ash/ember (AmbientMotes) instance budget for a quality tier */
+export function moteBudget(tier: number, atmosphere: boolean): number {
+  return atmosphere ? ([260, 160, 90, 0][tier] ?? 160) : 0;
+}
+
 export interface QualityState {
   tier: number;
   emaMs: number;

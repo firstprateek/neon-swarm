@@ -54,3 +54,27 @@ export const UNLOCKS: Unlock[] = [
 export function unlockedIds(m: Meta = getMeta()): string[] {
   return UNLOCKS.filter(u => u.has(m)).map(u => u.id);
 }
+
+/** the starting-secondary fields of GameState that meta unlocks may touch */
+export interface SecondaryLevels { orbitalLevel: number; droneLevel: number; teslaLevel: number }
+
+/**
+ * Stamp the deploy-time starting secondaries onto a fresh run's state.
+ * FREEPLAY: raise each secondary to its earned unlock level (never downgrade —
+ * cheats/upgrades already applied stay). DAILY: explicitly CLEAR all three, so a
+ * prior freeplay run in the same session can never leak unlocks into the
+ * equal-footing competition. Called by main.ts deploy(); pure so the selftest
+ * can pin the isolation invariant.
+ */
+export function applyStartingSecondaries(s: SecondaryLevels, isDaily: boolean, ids: string[] = unlockedIds()): void {
+  if (isDaily) {
+    s.orbitalLevel = 0;
+    s.droneLevel = 0;
+    s.teslaLevel = 0;
+    return;
+  }
+  if (ids.includes('orbital')) s.orbitalLevel = Math.max(s.orbitalLevel, 1);
+  if (ids.includes('drone')) s.droneLevel = Math.max(s.droneLevel, 1);
+  if (ids.includes('drone2')) s.droneLevel = Math.max(s.droneLevel, 2);
+  if (ids.includes('tesla')) s.teslaLevel = Math.max(s.teslaLevel, 1);
+}

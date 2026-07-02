@@ -5,7 +5,7 @@
  */
 import * as THREE from 'three/webgpu';
 import { SpatialGrid } from './spatial';
-import { Swarm, ENEMY_TYPES, BOSS_TYPE, HIT_FLASH } from './swarm';
+import { Swarm, ENEMY_TYPES, BOSS_TYPE, HIT_FLASH, PLAYER_RADIUS, phaseStrike } from './swarm';
 import { Bullets, Gems, Particles, Missiles } from './combat';
 import { Blast } from './fx';
 import { AmbientMotes } from './ambient';
@@ -18,15 +18,15 @@ import { spawnRate, rollEnemyType, bossHp, hordeSize } from './director';
 import { setSeed, srand, getSeed, clearSeed, streamFrom, CITY_SALT } from './rng';
 import { generateCity, resolveMove, cellBlocked, _reachable, WORLD, DIM, ObsFlag, type BlockGrid } from './city';
 import { dailySeed, dailyNumber, dailyKey, secondsToNextDaily, getDailyBest, recordDailyScore, recordDailyPlayed, getStreak } from './daily';
-import { getMeta, recordRun, unlockedIds } from './meta';
-import { createQuality, governQuality, MAX_TIER } from './perf';
+import { getMeta, recordRun, unlockedIds, applyStartingSecondaries } from './meta';
+import { createQuality, governQuality, gradeAmount, moteBudget, MAX_TIER } from './perf';
 import * as sfx from './sfx';
 import { defaultSettings, mergeSettings, qualityTier, applyPreset } from './settings';
 import { presetFlags, flagsToPreset, coerceDifficulty } from './modes';
 import { defaultKeys, mergeKeys, KEY_ACTIONS, resolveAction, isDown, keyLabel, isBindable } from './keybind';
 import { AVATARS, makeSurvivor } from './avatars';
 import { createState, grantXp, xpForLevel, rollUpgrades, registerKill, tickCombo, comboMultiplier, SCORE_BY_TYPE, ammoDropFor, UPGRADES } from './state';
-import { getMove, getAim, setTouchMove, clearTouchMove } from './input';
+import { getMove, getAim, setTouchMove, clearTouchMove, setTouchAim, clearTouchAim, setMouseAim, clearMouseAim, tickMouseAim, isAimActive } from './input';
 import { createTouch } from './touch';
 import { submitFeedback, pendingFeedback, type FeedbackCtx } from './feedback';
 import * as hud from './hud';
@@ -440,6 +440,39 @@ function run(): void {
     check('fx: blast finishes, goes idle, hides meshes', !blast.active && allHidden);
   }
 
+  // ---------- Dash phase-strike ----------
+  // While dashing, overlapped non-boss enemies take flat DPS and get shoved
+  // outward; bosses are immune and dead bodies are left for the death sweep.
+  {
+    const scene = new THREE.Scene();
+    const sw = new Swarm(8, scene);
+    const reach = PLAYER_RADIUS + 0.7; // main.ts dash reach (1.5)
+    sw.spawn(0, 1.0, 0);                 // grunt inside reach (r 0.5 → rr 2.0 at d 1.0)
+    sw.spawn(BOSS_TYPE, 1.0, 1.0, 5000); // boss OVERLAPPING (r 3.4) — must be immune
+    sw.spawn(0, 30, 0);                  // far grunt — untouched
+    const g = new SpatialGrid(2.5, 64, 8);
+    g.build(sw.posX, sw.posZ, sw.count, 0, 0);
+    const gruntHp = sw.hp[0], bossHp0 = sw.hp[1], farHp = sw.hp[2], gruntX = sw.posX[0];
+    phaseStrike(sw, g, 0, 0, reach, 10, 0.3); // one dash frame: dmg=DPS*dt, knock=KNOCK*dt
+    check('dash: strike damages an overlapped non-boss by exactly dmg', Math.abs(sw.hp[0] - (gruntHp - 10)) < 1e-4, `hp=${sw.hp[0]}`);
+    check('dash: knockback shoves the enemy straight outward', Math.abs(sw.posX[0] - (gruntX + 0.3)) < 1e-4 && sw.posZ[0] === 0, `x=${sw.posX[0]}`);
+    check('dash: bosses are immune (no damage, no shove)', sw.hp[1] === bossHp0 && sw.posX[1] === 1 && sw.posZ[1] === 1, `hp=${sw.hp[1]}`);
+    check('dash: out-of-reach enemies untouched', sw.hp[2] === farHp && sw.posX[2] === 30);
+    // dead-but-unswept bodies are skipped (no post-mortem shove before the sweep)
+    sw.hp[0] = 0;
+    const deadX = sw.posX[0];
+    phaseStrike(sw, g, 0, 0, reach, 10, 0.3);
+    check('dash: dead enemies skipped', sw.hp[0] === 0 && sw.posX[0] === deadX);
+    // just-outside-reach ring: rr = reach(1.5) + grunt r(0.5) = 2.0; d = 2.05 → miss
+    const sw2 = new Swarm(4, scene);
+    sw2.spawn(0, 2.05, 0);
+    const g2 = new SpatialGrid(2.5, 64, 4);
+    g2.build(sw2.posX, sw2.posZ, sw2.count, 0, 0);
+    const edgeHp = sw2.hp[0];
+    phaseStrike(sw2, g2, 0, 0, reach, 10, 0.3);
+    check('dash: enemy just past the overlap ring is missed', sw2.hp[0] === edgeHp, `hp=${sw2.hp[0]}`);
+  }
+
   // ---------- Ambient motes (atmosphere) ----------
   {
     const scene = new THREE.Scene();
@@ -458,6 +491,28 @@ function run(): void {
     am.setBudget(0);
     am.update(1 / 60, 0, 0, 0.5); // must early-return without throwing
     check('ambient: 0 budget hides + no-ops', am.count === 0 && !am.mesh.visible);
+  }
+
+  // ---------- Atmosphere flag gating (perf.ts helpers used by applyQuality) ----------
+  // settings.atmosphere is OFF by default — the grade AND the ash/ember motes must
+  // then be hard-zeroed at EVERY quality tier (clean screen); when ON, both tier
+  // down with the governor so the frame-rate target still wins.
+  {
+    let offZero = true;
+    for (let t = 0; t <= MAX_TIER; t++) if (gradeAmount(t, false) !== 0 || moteBudget(t, false) !== 0) offZero = false;
+    check('atmosphere: OFF zeroes grade + motes at every tier', offZero);
+    check('atmosphere: ON grade tiers down with quality (1/1/0.6/0)',
+      gradeAmount(0, true) === 1 && gradeAmount(1, true) === 1 && gradeAmount(2, true) === 0.6 && gradeAmount(3, true) === 0);
+    check('atmosphere: ON mote budget tiers down to 0 (260/160/90/0)',
+      moteBudget(0, true) === 260 && moteBudget(1, true) === 160 && moteBudget(2, true) === 90 && moteBudget(3, true) === 0);
+    check('atmosphere: out-of-range tier falls back safely', moteBudget(99, true) === 160 && gradeAmount(99, true) === 0);
+    // wire-through: the budget really drives the motes' instance count/visibility
+    const scene = new THREE.Scene();
+    const am = new AmbientMotes(300, scene);
+    am.setBudget(moteBudget(0, true));
+    check('atmosphere: ON budget activates the motes', am.count === 260 && am.mesh.visible);
+    am.setBudget(moteBudget(0, false));
+    check('atmosphere: OFF budget hides the motes', am.count === 0 && !am.mesh.visible);
   }
 
   // ---------- Backend SDK is OFF by default (Phase 2b feature flags) ----------
@@ -502,6 +557,41 @@ function run(): void {
     const k = { ...getMove() };
     check('input: clearTouchMove restores keyboard path', k.x === 0 && k.z === -1, JSON.stringify(k));
     window.dispatchEvent(new Event('blur'));
+  }
+
+  // ---------- Input: desktop mouse aim + stale-aim timeout ----------
+  // tickMouseAim releases the aim after 1.5s of cursor stillness, so a desktop
+  // player can never keep firing along a stale direction (QA #37 regression gate).
+  {
+    clearTouchAim(); clearMouseAim();
+    check('aim: no source → getAim null', getAim() === null && isAimActive() === false);
+    setMouseAim(3, 4); // must normalize to (0.6, 0.8)
+    const a1 = getAim();
+    check('aim: setMouseAim activates a unit aim dir', !!a1 && Math.abs(a1.x - 0.6) < 1e-9 && Math.abs(a1.z - 0.8) < 1e-9, JSON.stringify(a1));
+    tickMouseAim(1.0); // under the 1.5s timeout
+    check('aim: aim holds while under the idle timeout', getAim() !== null);
+    setMouseAim(1, 0); // cursor moved → the idle timer must RESET, not keep draining
+    tickMouseAim(1.0);
+    check('aim: cursor motion resets the idle timer', getAim() !== null && getAim()!.x === 1);
+    tickMouseAim(0.6); // 1.0 + 0.6 past the reset crosses 1.5s
+    check('aim: stale mouse aim releases after 1.5s idle', getAim() === null && isAimActive() === false);
+    setMouseAim(0, 1);
+    tickMouseAim(10); // one huge stall frame releases too (no dt clamp needed)
+    check('aim: big-dt frame releases in one tick', getAim() === null);
+    setMouseAim(0, -1); // re-aim after a timeout must re-arm cleanly
+    check('aim: re-aim after timeout re-activates', getAim() !== null && getAim()!.z === -1);
+    clearMouseAim();
+    setMouseAim(0, 0); // degenerate cursor delta: ignored, never activates
+    check('aim: zero-length mouse vector ignored', getAim() === null);
+    // priority: the mobile aim stick outranks the mouse; releasing it falls back
+    setMouseAim(1, 0);
+    setTouchAim(0, 2);
+    const at = getAim();
+    check('aim: touch aim outranks mouse aim', !!at && at.x === 0 && at.z === 1, JSON.stringify(at));
+    clearTouchAim();
+    check('aim: releasing touch falls back to the live mouse aim', getAim() !== null && getAim()!.x === 1);
+    clearMouseAim();
+    check('aim: clearMouseAim releases immediately', getAim() === null && isAimActive() === false);
   }
 
   // ---------- Touch controls (mobile-view SMOKE: ensure nothing broke) ----------
@@ -731,6 +821,42 @@ function run(): void {
     localStorage.removeItem('ns-meta');
   }
 
+  // ---------- Meta ↔ mode ISOLATION (deploy-time unlock gating) ----------
+  // The #1 fairness invariant: unlocked secondaries apply at deploy in FREEPLAY
+  // only; a DAILY run must never inherit them — not even from a freeplay run
+  // played earlier in the same session (same state object, no page reload).
+  {
+    const ALL = ['orbital', 'drone', 'tesla', 'drone2'];
+    const s = createState();
+    applyStartingSecondaries(s, false, ALL); // FREEPLAY deploy with everything earned
+    check('meta-gate: freeplay deploy applies earned secondaries',
+      s.orbitalLevel === 1 && s.teslaLevel === 1 && s.droneLevel === 2,
+      JSON.stringify([s.orbitalLevel, s.teslaLevel, s.droneLevel]));
+    applyStartingSecondaries(s, true, ALL); // the SAME state then deploys a DAILY run
+    check('meta-gate: daily deploy clears secondaries left by a prior freeplay run (no leak)',
+      s.orbitalLevel === 0 && s.teslaLevel === 0 && s.droneLevel === 0,
+      JSON.stringify([s.orbitalLevel, s.teslaLevel, s.droneLevel]));
+    const bare = createState();
+    applyStartingSecondaries(bare, false, []); // nothing earned yet
+    check('meta-gate: no unlocks → freeplay starts bare', bare.orbitalLevel === 0 && bare.droneLevel === 0 && bare.teslaLevel === 0);
+    const high = createState();
+    high.orbitalLevel = 3; // e.g. cheats/settings restored a higher level already
+    applyStartingSecondaries(high, false, ['orbital', 'drone']);
+    check('meta-gate: unlocks never downgrade an already-higher level', high.orbitalLevel === 3 && high.droneLevel === 1);
+    const wing = createState();
+    applyStartingSecondaries(wing, false, ['drone', 'drone2']);
+    check('meta-gate: drone2 outranks drone (starts the wing at 2)', wing.droneLevel === 2);
+    // default path reads the REAL stored meta (the exact wiring deploy() uses)
+    localStorage.removeItem('ns-meta');
+    recordRun(200, 1); // 200 kills (≥150 → drone) + reached the suburb (→ orbital)
+    const stored = createState();
+    applyStartingSecondaries(stored, false);
+    check('meta-gate: default path applies the stored meta unlocks', stored.orbitalLevel === 1 && stored.droneLevel === 1 && stored.teslaLevel === 0);
+    applyStartingSecondaries(stored, true);
+    check('meta-gate: daily ignores the stored meta unlocks too', stored.orbitalLevel === 0 && stored.droneLevel === 0 && stored.teslaLevel === 0);
+    localStorage.removeItem('ns-meta');
+  }
+
   // ---------- Director / difficulty ----------
   {
     check('director: spawn rate increases with time', spawnRate(120) > spawnRate(0), `${spawnRate(0)} -> ${spawnRate(120)}`);
@@ -869,7 +995,7 @@ function run(): void {
   // ---------- Settings ----------
   {
     const d = defaultSettings();
-    check('settings: sane defaults', d.quality === 'auto' && d.fps === 120 && d.sound === true && d.volume === 45 && d.bloom === true);
+    check('settings: sane defaults', d.quality === 'auto' && d.fps === 120 && d.sound === true && d.volume === 45 && d.bloom === true && d.atmosphere === false);
     // garbage / partial input is validated + clamped, never trusted
     check('settings: merge rejects garbage', JSON.stringify(mergeSettings(null)) === JSON.stringify(d) && JSON.stringify(mergeSettings('nope')) === JSON.stringify(d));
     const m = mergeSettings({ quality: 'banana', fps: 999, volume: 250, bloom: 'yes', sound: false });
@@ -878,6 +1004,9 @@ function run(): void {
     check('settings: volume clamped to 0..100', m.volume === 100, String(m.volume));
     check('settings: non-boolean bloom falls back to default', m.bloom === true);
     check('settings: valid boolean preserved', m.sound === false);
+    check('settings: atmosphere defaults OFF + garbage falls back OFF',
+      mergeSettings({ atmosphere: 'yes' }).atmosphere === false && mergeSettings({ atmosphere: 1 }).atmosphere === false);
+    check('settings: atmosphere opt-in preserved', mergeSettings({ atmosphere: true }).atmosphere === true);
     const m2 = mergeSettings({ quality: 'low', fps: 144, volume: 30, bloom: false, sound: true });
     check('settings: valid values preserved', m2.quality === 'low' && m2.fps === 144 && m2.volume === 30 && m2.bloom === false);
     // quality -> governor tier mapping
@@ -1004,6 +1133,30 @@ function run(): void {
     UPGRADES.forEach(u => { u.count = u.max; });
     check('state: fully-maxed pool rolls empty (softlock guard input)', rollUpgrades(3).length === 0);
     UPGRADES.forEach((u, i) => { u.count = saved[i]; });
+  }
+
+  // ---------- Cheats ↔ upgrade-pool contract (QA #40 regression gate) ----------
+  // The 'guns'/'padirules' cheats hardcode UPGRADES[8..10] as the three secondary
+  // weapons and stamp count = 5/5/6 so the maxed secondaries are never re-offered
+  // past their caps. Pin the indices, the caps, and the resulting roll exclusion —
+  // reordering UPGRADES or retuning a max silently breaks the cheats otherwise.
+  {
+    check('cheat: UPGRADES[8..10] are the secondaries the cheats max out',
+      UPGRADES[8].name === 'Orbital Blades' && UPGRADES[9].name === 'Arc Tesla' && UPGRADES[10].name === 'Recon Drone',
+      UPGRADES.slice(8, 11).map(u => u.name).join(','));
+    check('cheat: hardcoded cheat counts (5,5,6) equal the real caps',
+      UPGRADES[8].max === 5 && UPGRADES[9].max === 5 && UPGRADES[10].max === 6,
+      `${UPGRADES[8].max},${UPGRADES[9].max},${UPGRADES[10].max}`);
+    const saved = UPGRADES.map(u => u.count);
+    UPGRADES[8].count = 5; UPGRADES[9].count = 5; UPGRADES[10].count = 6; // exactly what applyCheat('guns') sets
+    setSeed(4242); // deterministic rolls — no flaky Math.random sampling
+    let reOffered = false;
+    for (let i = 0; i < 40; i++) {
+      for (const u of rollUpgrades(3)) if (u === UPGRADES[8] || u === UPGRADES[9] || u === UPGRADES[10]) reOffered = true;
+    }
+    clearSeed();
+    UPGRADES.forEach((u, i) => { u.count = saved[i]; });
+    check('cheat: maxed secondaries never re-offered after the cheat', !reOffered);
   }
 
   // ---------- Input ----------
