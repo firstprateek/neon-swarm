@@ -129,6 +129,9 @@ async function presentsBlack(
 const pageLoadT = performance.now(); // for ttfr_ms; must be before any await
 let runsThisSession = 0;             // run_index
 let runTainted = false;             // flipped by any cheat / debug poke
+// start()'s single keydown dispatcher; module-scoped so a re-entrant start() (future in-app
+// reset) removes the old listener instead of stacking a duplicate
+let prevKeydown: ((e: KeyboardEvent) => void) | null = null;
 
 async function start() {
   const params = new URLSearchParams(location.search);
@@ -537,11 +540,6 @@ async function start() {
     else { hud.hidePause(); closeSettings(); }
   }
 
-  window.addEventListener('keydown', e => {
-    if (e.code === 'KeyM') sfx.toggleMute();
-    else if (e.code === 'Escape') { if (settingsOpen()) closeSettings(); else togglePause(); }
-  });
-
   // --- cheat codes: type the sequence anytime ---
   const cheats: { code: string; effect: () => string }[] = [
     { code: 'god', effect: () => { godMode = !godMode; return godMode ? 'GOD MODE ON' : 'GOD MODE OFF'; } },
@@ -575,13 +573,36 @@ async function start() {
     hud.toast('✓ ' + msg);
     return msg;
   }
-  window.addEventListener('keydown', e => {
-    if (e.key.length !== 1 || !/[a-z]/i.test(e.key)) return;
-    cheatBuf = (cheatBuf + e.key.toLowerCase()).slice(-16);
-    for (const c of cheats) {
-      if (cheatBuf.endsWith(c.code)) { applyCheat(c.code); cheatBuf = ''; break; }
+  // --- single keydown dispatcher ---
+  // One window listener for mute/pause, cheat typing, and bound game actions (formerly three).
+  // The sections are independent — no early return between them — so e.g. KeyM both toggles
+  // mute and feeds the cheat buffer, exactly as the separate listeners did. (input.ts keeps
+  // its own held-key tracking; the remap capture in captureKey stopImmediatePropagation()s
+  // in the capture phase, so a capture press never reaches this dispatcher.)
+  function onKeydown(e: KeyboardEvent): void {
+    // global toggles
+    if (e.code === 'KeyM') sfx.toggleMute();
+    else if (e.code === 'Escape') { if (settingsOpen()) closeSettings(); else togglePause(); }
+
+    // cheat sequence buffer
+    if (e.key.length === 1 && /[a-z]/i.test(e.key)) {
+      cheatBuf = (cheatBuf + e.key.toLowerCase()).slice(-16);
+      for (const c of cheats) {
+        if (cheatBuf.endsWith(c.code)) { applyCheat(c.code); cheatBuf = ''; break; }
+      }
     }
-  });
+
+    // bound game actions (remappable) — only during active play
+    if (!canAct()) return;
+    const a = resolveAction(settings.keybinds, e.code);
+    if (a === 'fire') e.preventDefault();              // polled (held) — the volley loop reads it
+    else if (a === 'missile') { if (!e.repeat) fireMissile(); }
+    else if (a === 'nuke') { if (!e.repeat) fireNuke(); }
+    else if (a === 'dash' || e.code === 'ShiftRight') { if (!e.repeat) doDash(); } // ShiftRight = fixed dash alias
+  }
+  if (prevKeydown) window.removeEventListener('keydown', prevKeydown); // reset symmetry: never stack dispatchers
+  prevKeydown = onKeydown;
+  window.addEventListener('keydown', onKeydown);
 
   // --- pause-menu settings controls ---
   const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -1001,15 +1022,6 @@ async function start() {
     window.addEventListener('orientationchange', resetSticks);
     window.visualViewport?.addEventListener('resize', resetSticks);
   }
-
-  window.addEventListener('keydown', e => {
-    if (!canAct()) return;
-    const a = resolveAction(settings.keybinds, e.code);
-    if (a === 'fire') e.preventDefault();              // polled (held) — the volley loop reads it
-    else if (a === 'missile') { if (!e.repeat) fireMissile(); }
-    else if (a === 'nuke') { if (!e.repeat) fireNuke(); }
-    else if (a === 'dash' || e.code === 'ShiftRight') { if (!e.repeat) doDash(); } // ShiftRight = fixed dash alias
-  });
 
   // desktop camera zoom — mouse wheel (during play) + persist held-key zoom on release
   const ZOOM_KEYS = new Set(['Equal', 'Minus', 'NumpadAdd', 'NumpadSubtract']);
