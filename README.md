@@ -41,7 +41,7 @@ The arena is a finite, collidable post-apocalyptic city, generated from the run'
 
 - **Downtown** (centre, where you spawn) — a tower skyline on a tight road **grid**.
 - **Suburb** (mid ring) — houses, a landmark **shopping mall with a huge parking lot**, threaded by **winding arterials**.
-- **National park** (outer rim) — sparse ruins among **lakes, mountains, and pine woods**, laced with **winding dirt hiking trails** (not roads) and still wrapped in eerie haze (the rest of the city is clear). One peak is a **climbable mountain** — a bushy cone with a trail straight to the summit that you (and the chasing horde) actually ascend.
+- **National park** (outer rim) — sparse ruins among **lakes, mountains, and pine woods**, laced with **winding dirt hiking trails** (not roads) and — with the **FOG & HAZE** setting on — wrapped in eerie haze (the rest of the city is clear). One peak is a **climbable mountain** — a bushy cone with a trail straight to the summit that you (and the chasing horde) actually ascend.
 
 Each zone even has its own ground: cool **concrete** downtown, dusty **tan** in the suburb, green **grass** in the park.
 
@@ -59,14 +59,14 @@ Pick how much the game helps you aim and fire — set a preset (or flip the togg
 | **Medium** | on | aims at your mouse (the body faces the cursor) | fires toward the cursor |
 | **Hard** | off (hold Fire / left-click) | aims at your mouse | fires toward the cursor |
 
-In the **manual** modes (Medium / Hard) aiming is decoupled from movement — you walk with `WASD` and aim independently with the mouse (true twin-stick), instead of only firing where you walk. A neon reticle replaces the cursor, **left-click** fires a missile and **right-click** the nuke. On mobile, manual mode shows a **second joystick**: move with the left thumb, aim with the right thumb (holding it also fires), with the ability buttons centered between them.
+In the **manual** modes (Medium / Hard) aiming is decoupled from movement — you walk with `WASD` and aim independently with the mouse (true twin-stick), instead of only firing where you walk. A neon reticle replaces the cursor — **left-click** holds gun fire, **right-click** launches a missile (even while firing), **middle-click** the nuke. On mobile, manual mode shows a **second joystick**: move with the left thumb, aim with the right thumb (holding it also fires), with the ability buttons centered between them.
 
 In **Free Play** you can change controls anytime. In a **Daily Challenge** you choose the mode at the start and it's locked for that run — and **each mode has its own leaderboard** (an Easy score isn't compared against a Hard one).
 
 ## Game modes & the share loop
 
 - **☀ Daily Challenge** — one global seed per UTC day (everyone on Earth plays the *identical* run), with a local per-day personal best **per control mode**. Score is skill, not luck.
-- **▶ Free Play** — a fresh random run every time.
+- **▶ Free Play** — a fresh random run every time. Lifetime kills and furthest-zone milestones permanently **unlock starting capabilities** (orbital blade, recon drone, arc tesla…) — failure banks progress. Unlocks apply in Free Play only; the Daily stays an equal-footing competition.
 - **Challenge a friend** — the game-over "brag card" copies a `?seed=…` link. Opening it drops your friend into the **byte-identical** run to beat your score. The whole sim is deterministic (seeded PRNG), so the same seed + same inputs always replays exactly.
 
 ## How it stays fast
@@ -76,7 +76,7 @@ In **Free Play** you can change controls anytime. In a **Daily Challenge** you c
 - **Spatial hash grid** — rebuilt each frame with a counting sort (zero allocations), used for enemy separation, bullet collision, and contact damage.
 - **Adaptive quality governor** — holds the target frame rate (default 120 FPS) by flexing pixel-ratio and bloom tiers under load.
 - **WebGPU post-processing** — bloom via Three.js TSL nodes, with graceful fallback to plain rendering.
-- **GPU-only atmosphere** — the post-apocalyptic mood (sickly color grade folded into the bloom pass, gradient sky, fog, a procedural cracked-earth ground shader, drifting ash/embers) is fragment-shader + instancing work with **no extra lights or render passes**, and tiers down with the quality governor so it never costs the frame-rate target.
+- **GPU-only atmosphere** — the post-apocalyptic mood (sickly color grade folded into the bloom pass, gradient sky, fog, a procedural cracked-earth ground shader, drifting ash/embers) is fragment-shader + instancing work with **no extra lights or render passes**, and tiers down with the quality governor so it never costs the frame-rate target. The moody bits (fog, ash, color grade) are **opt-in** via Settings → VIDEO → **FOG & HAZE** (default off for a clean screen).
 - **Deterministic core** — gameplay randomness runs through a seeded `mulberry32` PRNG, so runs are reproducible (the foundation for daily seeds, shareable challenges, and future server-side anti-cheat). Cosmetic randomness (shake, particles) stays unseeded.
 
 ## Flags & debug
@@ -97,7 +97,7 @@ Other:
 
 - **Cheat codes** — just type the word during a run: `god`, `guns`, `tank`, `boss`, `horde`, `rich`, `levelup`.
 - `window.__spawnTest(n)` in the console — benchmark hook: spawns `n` enemies around the player with effectively infinite HP (a stress test, not a fair fight). 15,000 enemies hold 120 FPS on an Apple Silicon Mac.
-- **`/test.html`** — in-browser self-test suite (245 tests) importing the real modules; results land on `window.__testResults`.
+- **`/test.html`** — in-browser self-test suite (292 tests) importing the real modules; results land on `window.__testResults`.
 
 ## Roadmap
 
