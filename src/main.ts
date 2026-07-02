@@ -956,16 +956,27 @@ async function start() {
   }
 
   // dash phase-strike: while dashing, damage + knock back every (non-boss) enemy you overlap, so the
-  // panic button becomes an offensive repositioning tool. Brief + on cooldown, so the O(count) scan is cheap.
+  // panic button becomes an offensive repositioning tool. Grid-local (like the missiles' detonate) so a
+  // max-density dash never scans the whole swarm. The grid is last frame's build, but its center matches
+  // (dashStrike runs before this frame's player move) and the +1 cell pad swallows a frame of enemy drift.
   function dashStrike(dt: number): void {
-    const px = player.position.x, pz = player.position.z, reach = PLAYER_RADIUS + 0.7;
-    for (let i = 0; i < swarm.count; i++) {
-      if (swarm.hp[i] <= 0 || swarm.type[i] === BOSS_TYPE) continue;
-      const dx = swarm.posX[i] - px, dz = swarm.posZ[i] - pz, rr = reach + swarm.radius[i];
-      if (dx * dx + dz * dz > rr * rr) continue;
-      swarm.hp[i] -= DASH_STRIKE_DPS * dt;            // flat DPS while overlapped — the death sweep handles the kill
-      const d = Math.hypot(dx, dz) || 1, k = DASH_KNOCK * dt;
-      swarm.posX[i] += (dx / d) * k; swarm.posZ[i] += (dz / d) * k; // shove outward
+    const px = player.position.x, pz = player.position.z, reach = PLAYER_RADIUS + 0.7, knock = DASH_KNOCK * dt;
+    const { cellStart, indices, dim } = grid;
+    const cells = Math.ceil(reach / grid.cellSize) + 1;
+    const cx = grid.cellX(px), cz = grid.cellZ(pz);
+    for (let gz = Math.max(0, cz - cells); gz <= Math.min(dim - 1, cz + cells); gz++) {
+      for (let gx = Math.max(0, cx - cells); gx <= Math.min(dim - 1, cx + cells); gx++) {
+        const c = gz * dim + gx;
+        for (let k = cellStart[c]; k < cellStart[c + 1]; k++) {
+          const i = indices[k];
+          if (i >= swarm.count || swarm.hp[i] <= 0 || swarm.type[i] === BOSS_TYPE) continue;
+          const dx = swarm.posX[i] - px, dz = swarm.posZ[i] - pz, rr = reach + swarm.radius[i];
+          if (dx * dx + dz * dz > rr * rr) continue;
+          swarm.hp[i] -= DASH_STRIKE_DPS * dt;          // flat DPS while overlapped — the death sweep handles the kill
+          const d = Math.hypot(dx, dz) || 1;
+          swarm.posX[i] += (dx / d) * knock; swarm.posZ[i] += (dz / d) * knock; // shove outward
+        }
+      }
     }
   }
   function doDash(): void {
