@@ -459,6 +459,11 @@ async function start() {
     runMaxZone = 0;
     if (isDaily) {
       recordDailyPlayed(Date.now()); // advance the local daily streak the moment a daily run starts
+      // DAILY: explicitly clear meta-progression secondaries so a prior freeplay run
+      // in the same session can't leak unlocks into the equal-footing competition.
+      state.orbitalLevel = 0;
+      state.droneLevel = 0;
+      state.teslaLevel = 0;
     } else {
       // FREEPLAY only: apply earned capability unlocks (start with the secondaries you've unlocked).
       // The daily never applies these — it stays an equal-footing competition.
