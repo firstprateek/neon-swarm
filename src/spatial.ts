@@ -56,12 +56,12 @@ export class SpatialGrid {
   }
 
   cellX(x: number): number {
-    let c = ((x - this.originX) / this.cellSize) | 0;
+    const c = ((x - this.originX) / this.cellSize) | 0;
     return c < 0 ? 0 : c > this.dim - 1 ? this.dim - 1 : c;
   }
 
   cellZ(z: number): number {
-    let c = ((z - this.originZ) / this.cellSize) | 0;
+    const c = ((z - this.originZ) / this.cellSize) | 0;
     return c < 0 ? 0 : c > this.dim - 1 ? this.dim - 1 : c;
   }
 }

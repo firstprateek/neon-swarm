@@ -26,6 +26,9 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      # quality gate — a lint or type error blocks the deploy
+      - run: npx eslint .
+      - run: npx tsc --noEmit
       - run: npx vite build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

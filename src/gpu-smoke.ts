@@ -89,7 +89,7 @@ async function run(): Promise<void> {
     });
     acc.element(instanceIndex).assign(s);
   })().compute(N);
-  let loopErr = '', loopOk = false;
+  let loopErr: string, loopOk = false;
   try {
     await renderer.computeAsync(loopK);
     const a = new Float32Array(await renderer.getArrayBufferAsync(accAttr));

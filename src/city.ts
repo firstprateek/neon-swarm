@@ -533,7 +533,7 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
       const jz = (rng() - 0.5) * (lotIn - fd) * 0.6;
       const cx = lotCx + jx, cz = lotCz + jz;
       // height by kind: towers tower, hospitals tall, malls wide+low, houses low, ruins broken
-      let height = 6;
+      let height: number;
       if (kind === Kind.Tower) height = 16 + rng() * 20;         // tallest, but readable from the angled cam
       else if (kind === Kind.Hospital) height = 14 + rng() * 8;
       else if (kind === Kind.Mall) height = 8 + rng() * 3;

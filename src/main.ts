@@ -107,7 +107,7 @@ async function presentsBlack(
       return -1;
     }
   };
-  let sum = -1;
+  let sum: number;
   try {
     await draw();
     sum = sample();
