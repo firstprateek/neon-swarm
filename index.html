@@ -292,6 +292,7 @@
       background-image: repeating-linear-gradient(-45deg, var(--hz-stripe-a) 0 8px, var(--hz-stripe-b) 8px 16px); opacity: 0.85; }
     .mode-btn.daily:hover { background-color: rgba(255,200,74,0.14); filter: drop-shadow(0 0 10px var(--hz-amber-glow)); }
     .mode-btn.daily .mode-sub { color: #b89a52; }
+    .mode-btn.hidden { display: none; } /* DAILY is hidden on a challenge link */
     @keyframes blink { 50% { opacity: 0.25; } }
 
     .avatar-cards { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; max-width: 92vw; }
@@ -359,6 +360,7 @@
     .bg-rival { font-size: 12px; color: var(--hz-combo); margin-top: 4px; }
     .brag-daily { font-family: var(--font-display); font-size: 13px; letter-spacing: 3px; color: var(--hz-amber); margin: -6px 0 14px; }
     .brag-daily.newbest { color: var(--hz-xp); text-shadow: 0 0 14px rgba(68,255,153,0.6); animation: blink 1s infinite; }
+    .brag-daily.hidden { display: none; } /* else a previous run's daily/unlock line lingers */
     .gostats { font-size: 15px; line-height: 2.1; text-align: center; color: var(--hz-text-2); }
     .gostats b { color: var(--hz-cyan); }
     #restart-btn {
@@ -399,6 +401,7 @@
     .kb-reset { font-family: inherit; font-size: 11px; letter-spacing: 2px; padding: 6px; margin-top: 8px; width: 100%; background-color: transparent; color: var(--hz-text-3); border: 1px solid var(--hz-edge-base); cursor: pointer;
       clip-path: polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px); border-radius: 0; }
     .set-locked-note { font-size: 11px; letter-spacing: 1px; color: var(--hz-amber); margin-top: 10px; }
+    .set-locked-note.hidden { display: none; } /* only shown while a Daily run locks the controls */
     #set-controls[data-locked="true"] .preset-row,
     #set-controls[data-locked="true"] > label,
     #set-controls[data-locked="true"] .keybind-list,
@@ -451,7 +454,10 @@
     body.touch #mobile-zoom { top: max(70px, calc(env(safe-area-inset-top) + 56px)); right: max(14px, env(safe-area-inset-right)); }
     body.touch .stats       { right: max(66px, calc(env(safe-area-inset-right) + 52px)); top: max(16px, env(safe-area-inset-top)); }
 
-    #boss-wrap { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); width: 46%; max-width: 620px; text-align: center; }
+    /* bottom: clears the desktop #abilities row (bottom 14px + ~21px tall) so the two never overlap */
+    #boss-wrap { position: absolute; bottom: 46px; left: 50%; transform: translateX(-50%); width: 46%; max-width: 620px; text-align: center; }
+    /* touch manual-aim mode stacks the ability buttons at bottom-centre — move the bar up under the combo line */
+    body.touch:has(#touch-layer.aim-mode) #boss-wrap { bottom: auto; top: 100px; }
     #boss-wrap.hidden { display: none; }
     #boss-name { font-family: var(--font-display); font-size: 13px; letter-spacing: 5px; color: var(--hz-boss); text-shadow: 0 0 10px #ff44ff; margin-bottom: 5px; }
     #boss-bar { height: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,68,255,0.5); overflow: hidden;

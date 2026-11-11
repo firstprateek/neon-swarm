@@ -3,7 +3,7 @@ import * as THREE from 'three/webgpu';
 /**
  * Ambient ash & embers — a constant-count instanced field of motes that drift and
  * WRAP around the moving top-down camera, so the dead air always feels alive without
- * ever spawning/dying. Cosmetic only (Math.random, never the seeded srand). One draw
+ * ever spawning/dying. Cosmetic only (Math.random, never the seeded streams). One draw
  * call, no per-frame allocations. NOT the gameplay Particles pool (that's a
  * gravity/life burst pool that would fight its cap during heavy combat).
  *

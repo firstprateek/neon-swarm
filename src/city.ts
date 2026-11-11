@@ -8,8 +8,8 @@ import { streamFrom, CITY_SALT } from './rng';
  *
  * One FINITE world (1200×1200, matching the ground plane), generated once at
  * run start from an INDEPENDENT seeded stream (streamFrom) so a shared ?seed=
- * reproduces the exact same skyline WITHOUT ever touching the gameplay srand()
- * cursor (determinism stays intact — selftest guards this).
+ * reproduces the exact same skyline WITHOUT ever touching the gameplay streams
+ * (determinism stays intact — selftest guards this).
  *
  * Collision is a baked Uint8Array bitmask (`BlockGrid`): the 20k-enemy hot loop
  * and the player both resolve against it in O(1) per query, independent of how
@@ -503,7 +503,10 @@ export function generateCity(seed: number, isTouch: boolean, skipMeshes = false)
     for (let k = before; k < roadSegs.length; k++) bigRoads.push(roadSegs[k]);
   }
   const Rd = ZONE.R0_BASE - 8;                        // downtown grid, clipped to a disc (chord per line)
-  for (let p = -Rd; p <= Rd + 0.001; p += B) {
+  // grid lines sit on the GAPS between lots (start + k·B, lot centres are start + k·B + B/2) — starting
+  // at -Rd put them ~15u off the gaps, straight through buildings. Render-only: no rng, no collision.
+  const firstGap = start + Math.ceil((-Rd - start) / B) * B;
+  for (let p = firstGap; p <= Rd + 0.001; p += B) {
     const ext = Math.sqrt(Math.max(0, Rd * Rd - p * p));
     if (ext < 6) continue;
     roadSegs.push({ ax: p, az: -ext, bx: p, bz: ext, hw: road / 2 });

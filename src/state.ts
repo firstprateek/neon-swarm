@@ -1,4 +1,4 @@
-import { srand } from './rng';
+import { nextUpgradeStream } from './rng';
 
 export interface GameState {
   hp: number;
@@ -147,10 +147,11 @@ export const UPGRADES: Upgrade[] = [
   { name: 'Recon Drone', desc: 'a combat drone fights at your side — faster fire, then missiles, then more drones', max: 6, count: 0, apply: s => { s.droneLevel += 1; } },
 ];
 
-export function rollUpgrades(n = 3): Upgrade[] {
+/** shuffle the un-maxed upgrades and offer n; `rnd` defaults to this level-up's own seeded stream */
+export function rollUpgrades(n = 3, rnd: () => number = nextUpgradeStream()): Upgrade[] {
   const pool = UPGRADES.filter(u => u.count < u.max);
   for (let i = pool.length - 1; i > 0; i--) {
-    const j = (srand() * (i + 1)) | 0;
+    const j = (rnd() * (i + 1)) | 0;
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
   return pool.slice(0, Math.min(n, pool.length));

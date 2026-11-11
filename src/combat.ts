@@ -2,7 +2,7 @@ import * as THREE from 'three/webgpu';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import type { SpatialGrid } from './spatial';
 import { HIT_FLASH, type Swarm } from './swarm';
-import { srand } from './rng';
+import { combatRand } from './rng';
 
 let nextBulletId = 1;
 
@@ -183,7 +183,7 @@ export class Gems {
     if (this.count >= this.max) {
       // pool exhausted: fold the XP into an existing gem so nothing is lost
       // (gameplay — affects XP distribution, so seeded)
-      this.val[(srand() * this.count) | 0] += value;
+      this.val[(combatRand() * this.count) | 0] += value;
       return;
     }
     const i = this.count++;

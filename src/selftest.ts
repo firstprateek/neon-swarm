@@ -15,11 +15,11 @@ import { submitScore, fetchBoard, __lb } from './leaderboard';
 import { normNote, dprBucket, screenTier, refAllow } from './telemetry-helpers';
 import { Orbitals, Tesla } from './weapons';
 import { spawnRate, rollEnemyType, bossHp, hordeSize } from './director';
-import { setSeed, srand, getSeed, clearSeed, streamFrom, CITY_SALT } from './rng';
+import { setSeed, spawnRand, combatRand, nextUpgradeStream, getSeed, clearSeed, streamFrom, CITY_SALT } from './rng';
 import { generateCity, resolveMove, cellBlocked, _reachable, WORLD, DIM, ObsFlag, type BlockGrid } from './city';
 import { dailySeed, dailyNumber, dailyKey, secondsToNextDaily, getDailyBest, recordDailyScore, recordDailyPlayed, getStreak } from './daily';
 import { getMeta, recordRun, unlockedIds, applyStartingSecondaries } from './meta';
-import { createQuality, governQuality, gradeAmount, moteBudget, MAX_TIER } from './perf';
+import { createQuality, governQuality, calibrateDisplay, gradeAmount, moteBudget, MAX_TIER } from './perf';
 import * as sfx from './sfx';
 import { defaultSettings, mergeSettings, qualityTier, applyPreset } from './settings';
 import { presetFlags, flagsToPreset, coerceDifficulty } from './modes';
@@ -132,9 +132,10 @@ function run(): void {
     check('city: different seed → different layout', a.obstacles.count !== b.obstacles.count ||
       !a.obstacles.minX.every((v, i) => v === b.obstacles.minX[i]));
 
-    // 2. THE DESYNC GATE: generating the city must NOT advance the gameplay srand() stream
-    setSeed(777); const before: number[] = []; for (let i = 0; i < 8; i++) before.push(srand());
-    setSeed(777); generateCity(getSeed(), false, true); const after: number[] = []; for (let i = 0; i < 8; i++) after.push(srand());
+    // 2. THE DESYNC GATE: generating the city must NOT advance any gameplay stream
+    const draw8 = () => { const v: number[] = []; for (let i = 0; i < 8; i++) v.push(spawnRand(), combatRand(), nextUpgradeStream()()); return v; };
+    setSeed(777); const before = draw8();
+    setSeed(777); generateCity(getSeed(), false, true); const after = draw8();
     check('city: gen does NOT consume the gameplay rng (determinism intact)', before.every((v, i) => v === after[i]));
 
     // 3. streamFrom is independent + reproducible
@@ -746,13 +747,13 @@ function run(): void {
   // ---------- Determinism (seeded RNG) ----------
   {
     setSeed(12345);
-    const a: number[] = []; for (let i = 0; i < 16; i++) a.push(srand());
+    const a: number[] = []; for (let i = 0; i < 16; i++) a.push(spawnRand(), combatRand());
     check('rng: values in [0,1)', a.every(v => v >= 0 && v < 1));
     setSeed(12345);
-    const b: number[] = []; for (let i = 0; i < 16; i++) b.push(srand());
+    const b: number[] = []; for (let i = 0; i < 16; i++) b.push(spawnRand(), combatRand());
     check('rng: same seed -> identical sequence', JSON.stringify(a) === JSON.stringify(b));
     setSeed(99);
-    const c: number[] = []; for (let i = 0; i < 16; i++) c.push(srand());
+    const c: number[] = []; for (let i = 0; i < 16; i++) c.push(spawnRand(), combatRand());
     check('rng: different seed -> different sequence', JSON.stringify(a) !== JSON.stringify(c));
     check('rng: getSeed reports the active seed', getSeed() === 99);
 
@@ -771,6 +772,43 @@ function run(): void {
     setSeed(555); const sw2 = new Swarm(8, scene); for (let i = 0; i < 6; i++) sw2.spawn(0, i, 0);
     const sp2 = Array.from(sw2.speed.slice(0, 6));
     check('rng: swarm spawn speeds deterministic under seed', JSON.stringify(sp1) === JSON.stringify(sp2));
+
+    // INDEPENDENT STREAMS: the first N upgrade offers depend only on (seed, level-up index) —
+    // not on how many crit / spawn / gem draws (or earlier, differently-sized shuffles) came between
+    const N = 8;
+    const offers = (between: (k: number) => void): string => {
+      setSeed(2024);
+      const saved = UPGRADES.map(u => u.count);
+      const out: string[] = [];
+      for (let k = 0; k < N; k++) {
+        between(k);
+        out.push(rollUpgrades(3).map(u => u.name).join('|'));
+      }
+      UPGRADES.forEach((u, i) => { u.count = saved[i]; });
+      return out.join(' / ');
+    };
+    const quiet = offers(() => {});
+    const noisy = offers(k => {
+      for (let i = 0; i < 37 * (k + 1); i++) combatRand();           // crit rolls / gem scatter
+      for (let i = 0; i < 11 + k * 5; i++) rollEnemyType(300);        // spawn director
+      for (let i = 0; i < 5; i++) sw1.spawn(0, i, 0);                  // per-spawn speed draws
+      sw1.count = 0;
+    });
+    check('rng: first N upgrade offers identical with or without crit/spawn draws in between', quiet === noisy && quiet.split(' / ').length === N, `${quiet} ≠ ${noisy}`);
+    // ...and offer k is the same even if earlier offers shuffled a different-sized pool
+    // (offers 1-2 roll with one upgrade maxed out, i.e. one fewer shuffle draw each; from offer 3 on the pool is identical again)
+    const u0 = UPGRADES[0].count;
+    const shrunk = offers(k => { UPGRADES[0].count = k === 1 || k === 2 ? UPGRADES[0].max : u0; });
+    check('rng: upgrade offer k depends on the level-up index, not earlier shuffle lengths',
+      quiet.split(' / ').slice(3).join() === shrunk.split(' / ').slice(3).join(), `${quiet} ≠ ${shrunk}`);
+    // and the spawn stream is unaffected by combat/upgrade draws (and vice versa)
+    setSeed(31337); const sp: number[] = []; for (let i = 0; i < 20; i++) sp.push(spawnRand());
+    setSeed(31337); const sp2b: number[] = [];
+    for (let i = 0; i < 20; i++) { combatRand(); combatRand(); rollUpgrades(3); sp2b.push(spawnRand()); }
+    check('rng: spawn sequence depends only on its own draws', JSON.stringify(sp) === JSON.stringify(sp2b));
+    setSeed(31337); const cb: number[] = []; for (let i = 0; i < 20; i++) cb.push(combatRand());
+    setSeed(31337); const cb2: number[] = []; for (let i = 0; i < 20; i++) { spawnRand(); rollUpgrades(3); cb2.push(combatRand()); }
+    check('rng: combat sequence depends only on its own draws', JSON.stringify(cb) === JSON.stringify(cb2));
     clearSeed(); // back to Math.random for the rest of the suite
   }
 
@@ -982,7 +1020,8 @@ function run(): void {
     // cooldown prevents back-to-back tier changes
     const q3 = createQuality(target);
     q3.emaMs = 20; q3.cooldown = 0;
-    const c1 = governQuality(q3, 20, target, 1 / 60);
+    let c1 = false, guard = 0;
+    while (!c1 && guard++ < 600) c1 = governQuality(q3, 20, target, 1 / 60); // sustained miss → first step
     const c2 = governQuality(q3, 20, target, 1 / 60);
     check('perf: cooldown blocks consecutive changes', c1 === true && c2 === false, `${c1},${c2}`);
 
@@ -990,6 +1029,58 @@ function run(): void {
     const q4 = createQuality(target);
     for (let i = 0; i < 400; i++) governQuality(q4, 2, target, 1 / 60);
     check('perf: clamps at best tier (no underflow)', q4.tier === 0);
+  }
+
+  // ---------- Perf governor vs. the display's real refresh (vsync floor) ----------
+  {
+    const HZ60 = 1000 / 60, target = 1000 / 120; // the default 120 fps target on a 60 Hz panel
+    let s = 4242;
+    const jitter = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5) * 1.2; // ±0.6 ms
+    // feed `sec` seconds of frames; frame(t) gives the rAF delta for the current tier
+    const runFor = (q: ReturnType<typeof createQuality>, sec: number, frame: (tier: number) => number, onChange?: (from: number, to: number) => void) => {
+      let t = 0;
+      while (t < sec) {
+        const ms = frame(q.tier), from = q.tier;
+        if (governQuality(q, ms, target, ms / 1000) && onChange) onChange(from, q.tier);
+        t += ms / 1000;
+      }
+    };
+
+    // calibration: median rAF delta, clamped so an overloaded boot can't pass for a 30 Hz panel
+    const qc = createQuality(target);
+    for (let i = 0; i < 60; i++) calibrateDisplay(qc, HZ60 + jitter());
+    check('perf: display calibrates to the 60 Hz interval', Math.abs(qc.displayMs - HZ60) < 0.5, String(qc.displayMs));
+    const qs = createQuality(target);
+    for (let i = 0; i < 60; i++) calibrateDisplay(qs, 33.3);
+    check('perf: display calibration clamps slow boots to <= 20 ms', qs.displayMs <= 20 && qs.displayMs > 0, String(qs.displayMs));
+
+    // 60 Hz display, 120 target: vsync-locked frames (+ an occasional dropped frame) are NOT a miss
+    const q = createQuality(target, HZ60);
+    let n = 0;
+    runFor(q, 12, () => (++n % 120 === 0 ? 2 * HZ60 : HZ60 + jitter()));
+    check('perf: 60 Hz display with a 120 target holds the best tier', q.tier === 0, `tier=${q.tier} ema=${q.emaMs.toFixed(2)}`);
+
+    // a short shader-compile hitch at run start doesn't step down
+    const qh = createQuality(target, HZ60);
+    for (let i = 0; i < 6; i++) governQuality(qh, 60, target, 0.06);
+    runFor(qh, 3, () => HZ60 + jitter());
+    check('perf: brief hitch does not step down', qh.tier === 0, `tier=${qh.tier}`);
+
+    // real overload on the same display (vsync halves to 30 fps) still steps all the way down
+    runFor(q, 6, () => 2 * HZ60);
+    check('perf: sustained real overload steps down to the cheapest tier', q.tier === MAX_TIER, `tier=${q.tier}`);
+    // ... and once the overload ends, quality climbs back to the best tier
+    runFor(q, 20, () => HZ60 + jitter());
+    check('perf: recovers to the best tier after the overload ends', q.tier === 0, `tier=${q.tier}`);
+
+    // no oscillation: tier 0 is too expensive (30 fps), tier 1 fits. The governor may probe tier 0
+    // again, but with back-off — only a handful of retries in two minutes, and it lives at tier 1.
+    const qo = createQuality(target, HZ60);
+    let ups = 0, t0 = 0, total = 0;
+    runFor(qo, 120, tier => { const ms = tier === 0 ? 2 * HZ60 : HZ60 + jitter(); total += ms; if (tier === 0) t0 += ms; return ms; },
+      (from, to) => { if (to < from) ups++; });
+    check('perf: a failing tier is retried with back-off (no oscillation)', ups >= 1 && ups <= 6 && qo.tier === 1, `ups=${ups} tier=${qo.tier}`);
+    check('perf: almost no time spent on the failing tier', t0 / total < 0.1, (t0 / total).toFixed(3));
   }
 
   // ---------- Settings ----------

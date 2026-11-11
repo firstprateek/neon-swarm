@@ -19,10 +19,10 @@ import { AmbientMotes } from './ambient';
 import { Orbitals, Tesla, Drones } from './weapons';
 import { Minimap } from './minimap';
 import { spawnRate, rollEnemyType, bossHp, hordeSize, BOSS_INTERVAL } from './director';
-import { createQuality, governQuality, gradeAmount, moteBudget, QUALITY_TIERS, MAX_TIER } from './perf';
+import { createQuality, governQuality, calibrateDisplay, gradeAmount, moteBudget, QUALITY_TIERS, MAX_TIER } from './perf';
 import { loadSettings, saveSettings, qualityTier, applyPreset, clampZoom, ZOOM_MAX, ZOOM_DEFAULT, type Settings, type QualityMode } from './settings';
 import { AVATARS, makeSurvivor } from './avatars';
-import { setSeed, getSeed, randomSeed, srand } from './rng';
+import { setSeed, getSeed, randomSeed, spawnRand, combatRand } from './rng';
 import { TELEMETRY_ENDPOINT } from './config';
 import { track, initTelemetry, wireTelemetryLifecycle } from './telemetry';
 import { submitScore, flushScores, beaconFlushScores, fetchBoard } from './leaderboard';
@@ -34,7 +34,7 @@ import * as hud from './hud';
 
 const MAX_ENEMIES = 20000;
 
-// --- WebGL2 instancing fix (three r172) -------------------------------------
+// --- WebGL2 + WebGPU instancing fix (three r172) ----------------------------
 // three's InstanceNode packs an InstancedMesh's transforms into ONE uniform
 // buffer when the instance count is <= 1000, sizing the block to the mesh's
 // capacity (count * mat4 = count * 64 bytes). three's threshold assumes a 64KB
@@ -42,10 +42,19 @@ const MAX_ENEMIES = 20000;
 // bytes (256 mat4s). So on the WebGL2 fallback every InstancedMesh with a
 // capacity in 257..1000 fails to validate its VERTEX program and floods the
 // console (the 260-mote ambient field, the city's road/trail layers, ...).
-// Fix: on the WebGL2 backend only, force three down its instanced-ATTRIBUTE
+// Fix: on the WebGL2 backend, force three down its instanced-ATTRIBUTE
 // path (what it already uses for >1000 instances, correct for any draw count)
-// for any mesh whose matrix UBO would overflow. WebGPU keeps the UBO path.
+// for any mesh whose matrix UBO would overflow.
+// WebGPU: the same hazard at a larger size. three picks the path from the LIVE
+// `count` when the render object is (re)built, but sizes the UBO from the full
+// capacity. The big pools (20k swarm, 4096 bullets/gems, 8192 particles) are
+// normally first built at full count (attribute path), but any later rebuild
+// — e.g. a change to the scene's light set — while only a few hundred are alive
+// selected the UBO path and blew WebGPU's 64KB maxUniformBufferBindingSize
+// (Invalid BindGroup → the pools stopped drawing). So on WebGPU, capacity > 1000
+// (three's own threshold) always takes the attribute path, whatever the count.
 const UBO_MAT4_CAPACITY = 256; // 256 * 64 = 16384 = GL_MAX_UNIFORM_BLOCK_SIZE
+const UBO_MAT4_CAPACITY_WEBGPU = 1000; // three's threshold; 1000 * 64 < 65536
 {
   type In = { count: number; instanceMatrix: { count: number } | null; instanceMatrixNode: unknown };
   type Bld = { renderer?: { backend?: { isWebGPUBackend?: boolean } } };
@@ -54,7 +63,8 @@ const UBO_MAT4_CAPACITY = 256; // 256 * 64 = 16384 = GL_MAX_UNIFORM_BLOCK_SIZE
   proto.setup = function (this: In, builder: Bld) {
     const isWebGL = builder?.renderer?.backend?.isWebGPUBackend !== true;
     const capacity = this.instanceMatrix ? this.instanceMatrix.count : 0;
-    if (isWebGL && this.instanceMatrixNode === null && capacity > UBO_MAT4_CAPACITY) {
+    const limit = isWebGL ? UBO_MAT4_CAPACITY : UBO_MAT4_CAPACITY_WEBGPU;
+    if (this.instanceMatrixNode === null && capacity > limit) {
       const saved = this.count;
       this.count = 1001; // > 1000 makes three choose the instanced-attribute path
       try { return origSetup.call(this, builder); }
@@ -536,7 +546,7 @@ async function start() {
     { code: 'guns', effect: () => { state.dmg = 80; state.fireRate = 14; state.projectiles = 8; state.pierce = 6; state.bulletSpeed = 48; state.orbitalLevel = 5; state.teslaLevel = 5; state.droneLevel = 6; UPGRADES[8].count = 5; UPGRADES[9].count = 5; UPGRADES[10].count = 6; return 'MAX WEAPONS'; } }, // mark secondaries maxed so they're not re-offered past cap
     { code: 'tank', effect: () => { state.maxHp += 200; state.hp = state.maxHp; return '+200 MAX HP'; } },
     { code: 'boss', effect: () => { spawnBoss(); return 'BOSS SUMMONED'; } },
-    { code: 'horde', effect: () => { for (let i = 0; i < 400; i++) { const a = srand() * Math.PI * 2, r = 18 + srand() * 40; swarm.spawn((srand() * BOSS_TYPE) | 0, player.position.x + Math.cos(a) * r, player.position.z + Math.sin(a) * r); } return 'HORDE SUMMONED'; } }, // seeded RNG (not Math.random) so it stays deterministic
+    { code: 'horde', effect: () => { for (let i = 0; i < 400; i++) { const a = spawnRand() * Math.PI * 2, r = 18 + spawnRand() * 40; swarm.spawn((spawnRand() * BOSS_TYPE) | 0, player.position.x + Math.cos(a) * r, player.position.z + Math.sin(a) * r); } return 'HORDE SUMMONED'; } }, // seeded spawn stream (not Math.random) so it stays deterministic
     { code: 'rich', effect: () => { state.score += 10000; return '+10000 SCORE'; } },
     { code: 'levelup', effect: () => { state.pendingLevels++; return 'LEVEL UP'; } },
     // the everything cheat: god mode, max level + every attribute maxed, whole map revealed,
@@ -735,7 +745,7 @@ async function start() {
   byId<HTMLButtonElement>('hud-gear').addEventListener('click', () => togglePause());
   byId<HTMLButtonElement>('pause-settings-btn').addEventListener('click', openSettings);
   byId<HTMLButtonElement>('resume-btn').addEventListener('click', () => togglePause());
-  byId<HTMLButtonElement>('pause-restart-btn').addEventListener('click', () => resetRun());
+  byId<HTMLButtonElement>('pause-restart-btn').addEventListener('click', () => quitRun());
 
   // tap the backdrop (outside the content) to close — mobile has no Esc key
   const pauseOverlayEl = byId('pause-overlay');
@@ -779,7 +789,7 @@ async function start() {
     // path and the 'boss' cheat so counters/warning/sfx don't fire on a spawn that silently no-ops.
     if (activeBosses > 0 || swarm.count >= MAX_ENEMIES) return;
     bossesSpawned++;
-    const a = srand() * Math.PI * 2;
+    const a = spawnRand() * Math.PI * 2;
     const rad = 50;
     swarm.spawn(BOSS_TYPE, player.position.x + Math.cos(a) * rad, player.position.z + Math.sin(a) * rad, bossHp(bossesSpawned));
     activeBosses++;
@@ -805,8 +815,8 @@ async function start() {
     spawnAcc += dt * spawnRate(t) * zonePressure;
     while (spawnAcc >= 1) {
       spawnAcc -= 1;
-      const a = srand() * Math.PI * 2;
-      const rad = 52 + srand() * 18;
+      const a = spawnRand() * Math.PI * 2;
+      const rad = 52 + spawnRand() * 18;
       swarm.spawn(rollEnemyType(t), player.position.x + Math.cos(a) * rad, player.position.z + Math.sin(a) * rad);
     }
 
@@ -816,7 +826,7 @@ async function start() {
       const n = hordeSize(t);
       for (let i = 0; i < n; i++) {
         const a = (i / n) * Math.PI * 2;
-        const rad = 58 + srand() * 8;
+        const rad = 58 + spawnRand() * 8;
         swarm.spawn(rollEnemyType(t + 30), player.position.x + Math.cos(a) * rad, player.position.z + Math.sin(a) * rad);
       }
     }
@@ -887,6 +897,15 @@ async function start() {
   let facing = Math.PI; // face "forward" (−z, the camera's view dir) so a dash before the first update goes forward, not backward
   let muzzle = 0; // muzzle-flash glow pulse, decays each frame
   const baseGlow = glow.intensity;
+  // Hide/show the survivor WITHOUT toggling player.visible: that would drop the child `glow`
+  // PointLight from the scene's light set, which changes the lights cache key and forces every
+  // render object to be rebuilt (on WebGPU this rebuilt the big pools at a tiny live count — see
+  // the InstanceNode patch at the top). The light stays in the scene; only its intensity goes dark.
+  function showPlayer(v: boolean): void {
+    ring.visible = v;
+    if (survivor) survivor.visible = v;
+    glow.intensity = v ? baseGlow : 0;
+  }
 
   function fireVolley(): void {
     const px = player.position.x, pz = player.position.z;
@@ -902,7 +921,7 @@ async function start() {
     const n = state.projectiles;
     const spread = 0.14;
     const base = Math.atan2(dirX, dirZ) - ((n - 1) / 2) * spread;
-    const crit = srand() < CRIT_CHANCE;          // seeded → same seed+inputs reproduce the same crits
+    const crit = combatRand() < CRIT_CHANCE;     // seeded combat stream → same seed+inputs reproduce the same crits
     const dmg = crit ? state.dmg * CRIT_MULT : state.dmg;
     const pierce = state.pierce + (city && city.groundHeight(px, pz) > 6 ? 2 : 0); // HIGH GROUND: +pierce up the mountain
     for (let k = 0; k < n; k++) {
@@ -1047,14 +1066,9 @@ async function start() {
     }
   }
 
-  function gameOver(): void {
-    over = true;
-    particles.burst(player.position.x, 1, player.position.z, new THREE.Color(0x44ffee), 160, 16);
-    player.visible = false;
-    addShake(2.0);
-    sfx.sfxDeath();
-    sfx.stopMusic(); // silence the drone on death (the next deploy restarts it)
-    hud.hideBoss();
+  /** Bank a finished run — daily best, lifetime meta (unlock milestones), run_end telemetry and
+   *  the Daily leaderboard submit — whether it ended by death or was abandoned from the pause menu. */
+  function bankRun(reason: 'death' | 'quit') {
     const newDailyBest = isDaily ? recordDailyScore(dailyNum, dailyMode, state.score) : false;
     // META: fold this run into lifetime totals + surface any newly-crossed capability milestone
     const beforeUnlocks = unlockedIds();
@@ -1066,7 +1080,7 @@ async function start() {
       mode: isDaily ? dailyMode : 'free', survivor: AVATARS[settings.avatar].name,
       score: state.score, kills: state.kills, level: state.level, time_s: state.time, combo_peak: state.comboPeak,
       is_daily: isDaily, daily_num: isDaily ? dailyNum : null, new_daily_best: newDailyBest,
-      run_index: runsThisSession, tainted: runTainted, end_reason: 'death',
+      run_index: runsThisSession, tainted: runTainted, end_reason: reason,
     });
     if (isDaily && !runTainted) {
       submitScore({
@@ -1075,6 +1089,24 @@ async function start() {
         backend: onWebGPU() ? 'webgpu' : 'webgl2',
       });
     }
+    return { newDailyBest, newUnlock, seed };
+  }
+
+  /** pause-menu RESTART: a started, still-live run is banked (reason 'quit') before it's wiped */
+  function quitRun(): void {
+    if (started && !over) bankRun('quit');
+    resetRun();
+  }
+
+  function gameOver(): void {
+    over = true;
+    particles.burst(player.position.x, 1, player.position.z, new THREE.Color(0x44ffee), 160, 16);
+    showPlayer(false);
+    addShake(2.0);
+    sfx.sfxDeath();
+    sfx.stopMusic(); // silence the drone on death (the next deploy restarts it)
+    hud.hideBoss();
+    const { newDailyBest, newUnlock, seed } = bankRun('death');
     // anonymous run context for feedback — no UA, no id, no geo (privacy ceiling)
     const fbCtx: FeedbackCtx = {
       appVersion: APP_VERSION,
@@ -1136,7 +1168,7 @@ async function start() {
     // player + camera back to the boot pose
     facing = Math.PI; walkPhase = 0; walkAmt = 0;
     if (rig) rig.legL.rotation.x = rig.legR.rotation.x = rig.armL.rotation.x = rig.armR.rotation.x = 0;
-    player.visible = true;
+    showPlayer(true);
     player.position.set(0, 0, 0);
     player.rotation.set(0, 0, 0);
     camera.position.set(0, 26, 15);
@@ -1177,9 +1209,10 @@ async function start() {
     flags: () => ({ started, over, leveling, paused }),
     togglePause,
     resetRun,
+    quitRun,
     applyCheat,
     godMode: () => godMode,
-    quality: () => ({ tier: quality.tier, label: QUALITY_TIERS[quality.tier].label, emaMs: +quality.emaMs.toFixed(2), bloom: bloomEnabled, pixelRatio: renderer.getPixelRatio() }),
+    quality: () => ({ tier: quality.tier, label: QUALITY_TIERS[quality.tier].label, emaMs: +quality.emaMs.toFixed(2), displayMs: +quality.displayMs.toFixed(2), bloom: bloomEnabled, pixelRatio: renderer.getPixelRatio() }),
     shake: () => shake,
     addShake,
     hitStop: () => hitStop,
@@ -1382,7 +1415,7 @@ async function start() {
         activeBosses--;
         // bosses pay out a cluster of gems and a big explosion
         for (let g = 0; g < 6; g++) {
-          gems.spawn(x + (srand() - 0.5) * 3, z + (srand() - 0.5) * 3, Math.ceil(xp * lootMult / 6));
+          gems.spawn(x + (combatRand() - 0.5) * 3, z + (combatRand() - 0.5) * 3, Math.ceil(xp * lootMult / 6));
         }
         particles.burst(x, t.radius, z, t.color, 90, 18);
         addShake(1.4);
@@ -1439,8 +1472,10 @@ async function start() {
       fpsTime = 0;
     }
 
-    // hold the target frame rate by flexing quality (skip while pinned)
-    if (pinnedTier < 0 && governQuality(quality, rawDt * 1000, targetFrameMs, rawDt)) {
+    // measure the display's real frame interval first (median rAF delta), then hold the
+    // target frame rate — judged against max(target, display interval) — by flexing quality
+    if (quality.displayMs === 0) calibrateDisplay(quality, rawDt * 1000);
+    else if (pinnedTier < 0 && governQuality(quality, rawDt * 1000, targetFrameMs, rawDt)) {
       applyQuality();
     }
 

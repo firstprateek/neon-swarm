@@ -2,7 +2,7 @@ import * as THREE from 'three/webgpu';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import type { SpatialGrid } from './spatial';
 import { cellBlocked, nearestFree, type BlockGrid } from './city';
-import { srand } from './rng';
+import { spawnRand } from './rng';
 
 /**
  * Procedurally build a low-poly shambling humanoid from merged boxes — a clear
@@ -160,7 +160,7 @@ export class Swarm {
       const b = this.blockGrid.bound - 1;
       if (x < -b) x = -b; else if (x > b) x = b;
       if (z < -b) z = -b; else if (z > b) z = b;
-      // and never sealed inside a building — nudge to walkable ground (deterministic, no srand)
+      // and never sealed inside a building — nudge to walkable ground (deterministic, no rng draw)
       if (cellBlocked(this.blockGrid, x, z)) { const f = nearestFree(this.blockGrid, x, z); x = f.x; z = f.z; }
     }
     const i = this.count++;
@@ -168,7 +168,7 @@ export class Swarm {
     this.posX[i] = x;
     this.posZ[i] = z;
     this.hp[i] = this.maxHp[i] = hpOverride ?? t.hp;
-    this.speed[i] = t.speed * (0.9 + srand() * 0.2); // gameplay (affects collisions) -> seeded
+    this.speed[i] = t.speed * (0.9 + spawnRand() * 0.2); // gameplay (affects collisions) -> seeded spawn stream
     this.radius[i] = t.radius;
     this.dps[i] = t.dps;
     this.xpv[i] = t.xp;

@@ -97,7 +97,7 @@ Other:
 
 - **Cheat codes** — just type the word during a run: `god`, `guns`, `tank`, `boss`, `horde`, `rich`, `levelup`.
 - `window.__spawnTest(n)` in the console — benchmark hook: spawns `n` enemies around the player with effectively infinite HP (a stress test, not a fair fight). 15,000 enemies hold 120 FPS on an Apple Silicon Mac.
-- **`/test.html`** — in-browser self-test suite (292 tests) importing the real modules; results land on `window.__testResults`.
+- **`/test.html`** — in-browser self-test suite (304 tests) importing the real modules; results land on `window.__testResults`.
 
 ## Roadmap
 
