@@ -114,3 +114,7 @@ The plan is a Wordle-style viral loop with global leaderboards, built in phases:
 - Move enemy steering onto the GPU with TSL compute shaders (storage buffers + instanced rendering straight from GPU memory)
 - More weapons (orbiting blades, chain lightning), boss-drop unique weapons, richer audio
 - Ghost races (replay a friend's recorded inputs alongside your run)
+
+## License
+
+[MIT](LICENSE) © 2026 Prateek Joshi
