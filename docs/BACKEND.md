@@ -547,13 +547,13 @@ Other cards: **DAU (with `salt_rotations` flag so inflated days are obvious)**, 
 - [ ] **Privacy-reviewed rotating-but-linkable token** for exact cross-day cohorts — **needs a fresh privacy GO** (reintroduces device-storage tradeoffs v1 avoids; would change the consent posture).
 - [ ] **True leaderboard verification = its own multi-WEEK spec/GO:** fixed-timestep loop, all outcome randomness on `srand()` (remove `swarm.ts:176`/spawn `Math.random()`), deterministic input-log recorder, AND anti-farming for the public daily seed. Not part of this doc.
 
-**Files this touches (all absolute):**
-- `/Users/padi/Documents/projects/ai-projects/neon-swarm/src/telemetry.ts` (new)
-- `/Users/padi/Documents/projects/ai-projects/neon-swarm/src/main.ts` — §0 state (`pageLoadT`, `runsThisSession`, `runTainted`), utm on `shareUrl` (:588), reuse `newDailyBest` (:583), `onShare` wiring, and the 7 `track()` calls (~99, ~168, 269, 266, 573)
-- `/Users/padi/Documents/projects/ai-projects/neon-swarm/src/hud.ts` — `onShare` callback param on `showGameOver` (~419); inherits utm via `info.shareUrl`
-- `/Users/padi/Documents/projects/ai-projects/neon-swarm/src/swarm.ts` — (v2 only) remove outcome-path `Math.random()` IF true re-sim is ever pursued
-- `/Users/padi/Documents/projects/ai-projects/neon-swarm/index.html` — first-ever CSP `connect-src` (Report-Only first); NO Umami `<script>` (injected by SDK)
-- `/Users/padi/Documents/projects/ai-projects/neon-swarm/vite.config.*` — `__VER__`/build-sha define
+**Files this touches (repo-relative):**
+- `src/telemetry.ts` (new)
+- `src/main.ts` — §0 state (`pageLoadT`, `runsThisSession`, `runTainted`), utm on `shareUrl` (:588), reuse `newDailyBest` (:583), `onShare` wiring, and the 7 `track()` calls (~99, ~168, 269, 266, 573)
+- `src/hud.ts` — `onShare` callback param on `showGameOver` (~419); inherits utm via `info.shareUrl`
+- `src/swarm.ts` — (v2 only) remove outcome-path `Math.random()` IF true re-sim is ever pursued
+- `index.html` — first-ever CSP `connect-src` (Report-Only first); NO Umami `<script>` (injected by SDK)
+- `vite.config.*` — `__VER__`/build-sha define
 - plus new server/infra files (`docker-compose.yml`, `telemetry-config.json`, ingest Go/PB-hook, `*.sh` cron scripts) living outside the static repo on the Mac Mini
 
 **Caveats pinned to the dashboard (honest by design):**
